@@ -52,33 +52,50 @@ function upcCheckDigit(eleven) {
 
 const demoUpc = (code) => { const body = `200000${code.padStart(5, '0')}`; return body + upcCheckDigit(body); };
 
-function load({ hashPin }) {
-  const now = Date.now();
+function insertOrder(o, now) {
+  const r = run(`INSERT INTO orders (load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  o.load_no, o.stop, o.store, o.account_no || '', o.address, o.city, o.state, o.day_no, o.order_date, o.zone, now);
+  const id = Number(r.lastInsertRowid);
+  o.lines.forEach((l, i) => {
+    const desc = ITEMS.find(([c]) => c === l.code)[1];
+    run(`INSERT INTO order_lines (order_id, seq, code, description, qty, unit, out_qty, out_reason, out_status, out_at)
+      VALUES (?, ?, ?, ?, ?, 'CASES', ?, ?, ?, ?)`,
+    id, i, l.code, desc, l.qty, l.vipOut ? l.qty : 0, l.vipOut ? 'vip' : null, l.vipOut ? 'pending' : null, l.vipOut ? now : null);
+  });
+  run("INSERT INTO events (order_id, type, at) VALUES (?, 'created', ?)", id, now);
+  return id;
+}
+
+function ensureItems(now) {
   ITEMS.forEach(([code, description]) => {
     run('INSERT INTO items (code, description) VALUES (?, ?) ON CONFLICT(code) DO NOTHING', code, description);
     run(`INSERT INTO item_barcodes (gtin, code, status, created_at) VALUES (?, ?, 'confirmed', ?) ON CONFLICT(gtin) DO NOTHING`,
       demoUpc(code).padStart(14, '0'), code, now);
   });
+}
+
+// A fresh copy of the real Chuck's Carry Out pick list on Truck 1, for practice runs.
+function addChucksTestRun() {
+  const now = Date.now();
+  ensureItems(now);
+  const d = new Date(now);
+  const date = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(2)}`;
+  const id = insertOrder({ ...ORDERS[0], store: `${ORDERS[0].store} (TEST RUN)`, order_date: date }, now);
+  return { id };
+}
+
+function load({ hashPin }) {
+  const now = Date.now();
+  ensureItems(now);
   let users = 0;
   USERS.forEach(([username, name, role, pin]) => {
     if (one('SELECT id FROM users WHERE username = ?', username)) return;
     run('INSERT INTO users (username, name, pin_hash, role, created_at) VALUES (?, ?, ?, ?, ?)', username, name, hashPin(pin), role, now);
     users++;
   });
-  ORDERS.forEach((o) => {
-    const r = run(`INSERT INTO orders (load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    o.load_no, o.stop, o.store, o.account_no || '', o.address, o.city, o.state, o.day_no, o.order_date, o.zone, now);
-    const id = Number(r.lastInsertRowid);
-    o.lines.forEach((l, i) => {
-      const desc = ITEMS.find(([c]) => c === l.code)[1];
-      run(`INSERT INTO order_lines (order_id, seq, code, description, qty, unit, out_qty, out_reason, out_status, out_at)
-        VALUES (?, ?, ?, ?, ?, 'CASES', ?, ?, ?, ?)`,
-      id, i, l.code, desc, l.qty, l.vipOut ? l.qty : 0, l.vipOut ? 'vip' : null, l.vipOut ? 'pending' : null, l.vipOut ? now : null);
-    });
-    run("INSERT INTO events (order_id, type, at) VALUES (?, 'created', ?)", id, now);
-  });
+  ORDERS.forEach((o) => insertOrder(o, now));
   return { items: ITEMS.length, orders: ORDERS.length, users };
 }
 
-module.exports = { load, demoUpc };
+module.exports = { load, addChucksTestRun, demoUpc, ITEMS, CHUCKS_QTY };

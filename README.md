@@ -1,4 +1,6 @@
-# Pick Sheets
+# Pick Sheets · Perry Distributors Inc.
+
+> **Proof of concept.** This is a working demo built to show how barcode picking could replace paper pick sheets. It isn't in production use yet.
 
 A phone app for picking orders from the VIP pick lists. Pickers scan the product
 UPC barcodes with their iPhone camera instead of checking off paper. Outs go to a
@@ -78,11 +80,31 @@ npm start            # http://localhost:3000
 2. Go to Menu › Settings › **Load demo data**. This adds the Chuck's Carry Out pick
    list as Truck 1 / Stop 008, a few other orders, and three test logins:
    `picker`/1111, `supervisor`/2222 and `manager`/3333.
-3. Settings › **Print test barcodes** shows barcodes for the demo items. Show them
+3. Settings › **Start Chuck's Carry Out test run** adds a fresh copy of the real
+   Truck 1 / Stop 008 pick list (24 lines, 113 cases, 01172 printed `*OUT`) to practice on.
+   You can press it as many times as you like.
+4. Settings › **Print test barcodes** shows barcodes for the demo items. Show them
    on screen or print them, then scan them with a phone.
 
 The phone camera only works over **https**, so to scan with a phone the app has to
 be hosted (see below).
+
+## Automated test
+
+```sh
+npm test
+```
+
+This replays the Chuck's Carry Out pick list from start to finish against a throwaway
+database, the same way the phones do it:
+1. The order lands on Truck 1, and 01172 arrives already marked out.
+2. The picker claims the order, and a second person can't take it.
+3. The picker scans every case barcode and marks BUD SELECT 30/12 out ("can't find").
+4. A supervisor has to confirm both outs before approving.
+5. The outs and finished-order reports show the right people and numbers.
+
+It also checks that pickers are blocked from supervisor and management actions, and
+that barcode numbers are handled correctly (UPC-A, EAN-13, ITF-14 and UPC-E).
 
 ## Put it online
 
@@ -129,13 +151,15 @@ When Safari asks for camera access, tap **Allow**.
 
 ```
 server/            Node.js + Express API, SQLite via node:sqlite
-  index.js         web server
+  index.js         starts the web server
+  app.js           Express app (used by index.js and the tests)
   api.js           all API routes and permission checks
   db.js            database schema
   auth.js          username + PIN logins, roles
   push.js          phone notifications (Web Push)
   barcode.js       UPC / EAN / ITF-14 normalisation to GTIN-14
-  demo.js          sample data from the real Truck 1 pick list
+  demo.js          sample data and the Chuck's Carry Out test run
+test/              automated tests (npm test)
 public/            the phone app (plain JavaScript modules, no build step)
   js/views/        one file per screen
   vendor/zxing/    barcode reader (zxing-cpp WebAssembly, MIT)

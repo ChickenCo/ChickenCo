@@ -1,6 +1,6 @@
 // Home: the Trucks menu, and the list of orders on one truck.
 import { api, qs } from '../api.js';
-import { esc, statusPill, startOfToday } from '../ui.js';
+import { esc, statusPill, startOfToday, COMPANY } from '../ui.js';
 
 const view = document.getElementById('view');
 
@@ -26,7 +26,8 @@ export async function trucksView(ctx) {
           </a>`).join('')}
       </div>
       ${data.unassigned ? `<a class="card" href="#/truck/none"><strong>${data.unassigned} order${data.unassigned === 1 ? '' : 's'} on an unknown load #</strong><div class="muted small">Ask an admin to check the truck settings.</div></a>` : ''}
-      ${ctx.can('management') ? '<div class="toolbar"><a class="btn btn-primary" href="#/orders/new">+ New order</a></div>' : ''}`;
+      ${ctx.can('management') ? '<div class="toolbar"><a class="btn btn-primary" href="#/orders/new">+ New order</a></div>' : ''}
+      <footer class="app-footer">${COMPANY} · Pick Sheets · <span class="pill pill-poc">Proof of concept</span></footer>`;
   };
   ctx.refresh = render;
   await render();

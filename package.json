@@ -2,13 +2,16 @@
   "name": "chickenco-pick",
   "version": "0.2.0",
   "private": true,
-  "description": "Barcode pick sheet app for the warehouse",
+  "description": "Barcode pick sheet app for Perry Distributors Inc. (proof of concept)",
   "main": "server/index.js",
   "type": "commonjs",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
-    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js"
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\""
   },
   "dependencies": {
     "express": "5.2.1",

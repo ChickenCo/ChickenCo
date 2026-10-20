@@ -26,6 +26,11 @@ export async function settingsView(ctx) {
         </div>
       </section>
       <section class="card">
+        <h2>Test run</h2>
+        <p class="muted small">Adds a fresh copy of the real Chuck's Carry Out pick list (Truck 1, Stop 008, 24 lines, 113 cases, 01172 printed *OUT) so anyone can practice picking it start to finish. Use <b>Print test barcodes</b> below to scan without real product.</p>
+        <button class="btn btn-primary" data-act="testRun">Start Chuck's Carry Out test run</button>
+      </section>
+      <section class="card">
         <h2>Data</h2>
         <div class="toolbar">
           <a class="btn btn-ghost" href="/api/admin/backup" download>Download backup</a>
@@ -48,6 +53,13 @@ export async function settingsView(ctx) {
   ctx.actions.demo = async () => {
     if (!await confirmBox('Load demo data?', 'Sample orders, items and three test logins are added. Use this for trying things out, not on the real system.', 'Load')) return;
     try { const r = await api.post('/admin/demo'); toast(`Added ${r.orders} orders, ${r.items} items, ${r.users} logins`, 'ok'); } catch (err) { toast(err.message, 'error'); }
+  };
+  ctx.actions.testRun = async () => {
+    try {
+      const r = await api.post('/admin/test-run');
+      toast("Chuck's Carry Out test run added to Truck 1", 'ok');
+      location.hash = `#/order/${r.id}`;
+    } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.labels = async () => {
     const items = await api.get('/items');

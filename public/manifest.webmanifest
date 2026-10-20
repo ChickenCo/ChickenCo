@@ -1,5 +1,5 @@
 {
-  "name": "Pick Sheets",
+  "name": "Perry Distributors Pick Sheets",
   "short_name": "Pick Sheets",
   "id": "/",
   "start_url": "/",
@@ -7,7 +7,8 @@
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f5f2ee",
-  "theme_color": "#b8461b",
+  "theme_color": "#c8102e",
+  "description": "Barcode pick sheets for Perry Distributors Inc. (proof of concept)",
   "icons": [
     { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },

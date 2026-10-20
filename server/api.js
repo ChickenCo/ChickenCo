@@ -675,7 +675,13 @@ api.get('/admin/backup', requireRole('admin'), h((req, res) => {
 }));
 
 api.post('/admin/demo', requireRole('admin'), h(() => {
-  const result = tx(() => demo.load({ hashPin: auth.hashPin, adminId: null }));
+  const result = tx(() => demo.load({ hashPin: auth.hashPin }));
+  changed();
+  return result;
+}));
+
+api.post('/admin/test-run', requireRole('admin'), h(() => {
+  const result = tx(() => demo.addChucksTestRun());
   changed();
   return result;
 }));

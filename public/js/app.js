@@ -1,6 +1,6 @@
 // App shell: sign-in, routing, menu, and background refresh.
 import { api } from './api.js';
-import { esc, toast, choose, closeModal, modalOpen, ROLE_LABEL } from './ui.js';
+import { esc, toast, choose, closeModal, modalOpen, ROLE_LABEL, COMPANY } from './ui.js';
 import * as Scanner from './scanner.js';
 import { trucksView, truckView } from './views/trucks.js';
 import { pickView } from './views/pick.js';
@@ -30,7 +30,7 @@ const ctx = {
   can: (role) => !!ctx.user && RANK[ctx.user.role] >= RANK[role],
   chrome(title, back) {
     titleEl.textContent = title;
-    document.title = `${title} · Pick Sheets`;
+    document.title = `${title} · Pick Sheets · ${COMPANY}`;
     backBtn.hidden = !back;
     backBtn.onclick = () => { location.hash = back; };
   },
@@ -106,7 +106,7 @@ document.getElementById('menuBtn').onclick = async () => {
     { key: '#/account', label: 'My account' },
     { key: 'logout', label: 'Sign out', danger: true },
   ].filter(Boolean);
-  const pick = await choose('Menu', items, `${esc(ctx.user.name)} · ${ROLE_LABEL[ctx.user.role]}`);
+  const pick = await choose('Menu', items, `${esc(ctx.user.name)} · ${ROLE_LABEL[ctx.user.role]}<br><span class="small">${COMPANY} · Proof of concept</span>`);
   if (pick === 'logout') signOut();
   else if (pick) { if (location.hash === pick || (pick === '#/' && !location.hash)) route(); else location.hash = pick; }
 };
@@ -126,12 +126,15 @@ function showLogin(message = '') {
   view.innerHTML = `
     <form class="card login" id="loginForm">
       <img src="/icons/icon.svg" alt="" class="login-logo">
+      <p class="company">${COMPANY}</p>
       <h2>Pick Sheets</h2>
+      <p class="center"><span class="pill pill-poc">Proof of concept</span></p>
       <label>Username<input name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
       <label>PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="current-password" required></label>
       <p class="form-error" ${message ? '' : 'hidden'}>${esc(message)}</p>
       <button class="btn btn-primary btn-block">Sign in</button>
       <p class="muted small center">No account? Ask your administrator.</p>
+      <p class="muted small center poc-note">${COMPANY} · Proof of concept, not for production use yet.</p>
     </form>`;
   const form = document.getElementById('loginForm');
   const err = form.querySelector('.form-error');

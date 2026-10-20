@@ -3,6 +3,8 @@ const modal = document.getElementById('modal');
 const modalForm = document.getElementById('modalForm');
 const toastEl = document.getElementById('toast');
 
+export const COMPANY = 'Perry Distributors Inc.';
+
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const UNIT_SHORT = { CASES: 'cs', BTLS: 'btl', KEGS: 'keg', MISC: 'misc' };
