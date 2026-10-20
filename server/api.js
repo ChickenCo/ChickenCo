@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
-const { one, all, run, tx, getSetting, setSetting, DATA_DIR, db } = require('./db');
+const { one, all, run, tx, getSetting, setSetting, DATA_DIR, STORAGE_WARNING, db } = require('./db');
 const auth = require('./auth');
 const push = require('./push');
 const { normalizeBarcode, displayBarcode } = require('./barcode');
@@ -12,6 +12,8 @@ const api = express.Router();
 
 const UNITS = ['CASES', 'BTLS', 'KEGS', 'MISC'];
 const OUT_REASONS = { vip: 'Out on VIP sheet', out_of_stock: 'Out of stock', cant_find: "Can't find" };
+
+const STARTED_AT = Date.now();
 
 // Bumped on every change; clients poll /api/ping and refresh when it moves.
 let version = Date.now();
@@ -120,6 +122,11 @@ api.get('/me', h((req) => ({
   trucks: trucks(),
   vapidKey: push.publicKey(),
   version,
+  ...(atLeast(req.user, 'admin') && {
+    storageWarning: STORAGE_WARNING,
+    dbCreatedAt: getSetting('db_created_at'),
+    serverStartedAt: STARTED_AT,
+  }),
 })));
 
 api.get('/ping', h((req) => ({

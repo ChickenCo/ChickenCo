@@ -1,6 +1,6 @@
 // Admin settings (trucks, demo data, backup) and every user's own account page.
 import { api } from '../api.js';
-import { esc, toast, ask, confirmBox, ROLE_LABEL } from '../ui.js';
+import { esc, toast, ask, confirmBox, fmtTime, ROLE_LABEL } from '../ui.js';
 import { upcSvg } from '../upc.js';
 
 const view = document.getElementById('view');
@@ -10,7 +10,9 @@ export async function settingsView(ctx) {
   let rows = ctx.trucks.map((t) => ({ ...t }));
 
   function render() {
+    const srv = ctx.server || {};
     view.innerHTML = `
+      ${srv.storageWarning ? `<div class="banner danger"><b>Data is not being saved.</b> ${esc(srv.storageWarning)}</div>` : ''}
       <section class="card">
         <h2>Trucks</h2>
         <p class="muted small">Which load # on the VIP pick list belongs to which truck.</p>
@@ -39,6 +41,8 @@ export async function settingsView(ctx) {
         </div>
         <p class="muted small">Demo data adds the Chuck's Carry Out pick list and a few sample orders, plus three test logins:
           <b>picker</b> / 1111, <b>supervisor</b> / 2222, <b>manager</b> / 3333. The test barcodes only work with the demo items.</p>
+        <p class="muted small">Database created ${fmtTime(srv.dbCreatedAt)} · server started ${fmtTime(srv.serverStartedAt)}.
+          If the database keeps showing as created when the server started, data is being wiped on restart.</p>
       </section>`;
     view.querySelectorAll('.truck-row input').forEach((inp) => {
       inp.oninput = () => { const r = rows[Number(inp.closest('.truck-row').dataset.i)]; r[inp.name] = inp.name === 'truck' ? Number(inp.value) : inp.value.trim(); };

@@ -136,4 +136,21 @@ function setSetting(key, value) {
     key, JSON.stringify(value));
 }
 
-module.exports = { db, one, all, run, tx, getSetting, setSetting, DATA_DIR };
+// Remember when this database file was first created. If it keeps being "new" after
+// restarts, the data folder is not on a persistent disk and everything is being wiped.
+if (!one("SELECT 1 FROM settings WHERE key = 'db_created_at'")) setSetting('db_created_at', Date.now());
+
+// On a hosted server, a real disk shows up as a separate device mounted at DATA_DIR.
+// If DATA_DIR sits on the container's own filesystem, it is erased on every restart or deploy.
+function storageWarning() {
+  const hosted = process.env.RENDER || process.env.DATA_DIR === '/data';
+  if (!hosted) return null;
+  try {
+    if (fs.statSync(DATA_DIR).dev !== fs.statSync('/').dev) return null;
+  } catch { return null; }
+  return `No persistent disk is mounted at ${DATA_DIR}. Employees, orders and items are erased every time the server restarts or updates; only the admin login comes back. Add a disk mounted at ${DATA_DIR} (Render: service › Disks, Starter plan or higher).`;
+}
+const STORAGE_WARNING = storageWarning();
+if (STORAGE_WARNING) console.warn(`WARNING: ${STORAGE_WARNING}`);
+
+module.exports = { db, one, all, run, tx, getSetting, setSetting, DATA_DIR, STORAGE_WARNING };

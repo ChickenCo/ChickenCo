@@ -11,6 +11,7 @@ export async function trucksView(ctx) {
   const render = async () => {
     const data = await api.get(`/trucks${qs({ since: startOfToday() })}`);
     view.innerHTML = `
+      ${ctx.server?.storageWarning ? `<div class="banner danger"><b>Data is not being saved.</b> ${esc(ctx.server.storageWarning)}</div>` : ''}
       <div class="truck-grid">
         ${data.trucks.map((t) => `
           <a class="card truck-card ${t.orders ? '' : 'empty-truck'}" href="#/truck/${t.truck}">
