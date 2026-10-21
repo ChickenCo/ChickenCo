@@ -28,6 +28,19 @@ export function fmtTime(ms) {
     : d.toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+// "134 cases/hr", in red when under the target. No rate yet when there's under 5 minutes of picking.
+export function rateHtml(rate, target, { big = false } = {}) {
+  if (rate == null) return '<span class="muted">not enough picking yet</span>';
+  return `<span class="rate ${big ? 'rate-big' : ''} ${rate < target ? 'rate-low' : ''}">${rate.toLocaleString()}<small> cases/hr</small></span>`;
+}
+
+export function fmtDuration(ms) {
+  const m = Math.round(ms / 60000);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+export const fmtNum = (n) => Number(n || 0).toLocaleString();
+
 export const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
 let toastTimer;

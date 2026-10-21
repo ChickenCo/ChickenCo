@@ -6,6 +6,8 @@ const auth = require('./auth');
 const push = require('./push');
 const { normalizeBarcode, displayBarcode } = require('./barcode');
 const demo = require('./demo');
+const days = require('./days');
+const rates = require('./rates');
 
 const { requireRole, atLeast } = auth;
 const api = express.Router();
@@ -147,9 +149,9 @@ api.post('/push/subscribe', h((req) => { push.subscribe(req.user.id, req.body); 
 api.post('/push/unsubscribe', h((req) => { push.unsubscribe(str(req.body.endpoint, 1000)); }));
 
 // ---------- trucks & orders ----------
-api.get('/trucks', h((req) => {
-  const since = int(req.query.since) || 0;
-  const orders = all(`${ORDER_SELECT} WHERE o.status != 'done' OR o.completed_at >= ?`, since).map(withTruck);
+api.get('/trucks', h(() => {
+  const day = days.displayDay();
+  const orders = day ? all(`${ORDER_SELECT} WHERE o.day_id = ?`, day.id).map(withTruck) : [];
   const list = trucks().map(({ truck, load }) => {
     const mine = orders.filter((o) => o.truck === truck);
     return {
@@ -164,7 +166,7 @@ api.get('/trucks', h((req) => {
     };
   });
   const unassigned = orders.filter((o) => o.truck == null).length;
-  return { trucks: list, unassigned };
+  return { trucks: list, unassigned, day: days.summary(day) };
 }));
 
 api.get('/orders', h((req) => {
@@ -179,8 +181,9 @@ api.get('/orders', h((req) => {
     params.push(loadForTruck(req.query.truck) ?? '__none__');
   }
   if (req.query.active) {
-    where.push("(o.status != 'done' OR o.completed_at >= ?)");
-    params.push(int(req.query.since) || 0);
+    // The work day shown on the Trucks screen.
+    where.push('o.day_id = ?');
+    params.push(days.displayDay()?.id ?? -1);
   }
   if (req.query.status) {
     where.push('o.status = ?');
@@ -271,9 +274,9 @@ function saveLines(orderId, lines, userId) {
 api.post('/orders', requireRole('management'), h((req) => {
   const { header, lines } = readOrderBody(req.body);
   const id = tx(() => {
-    const r = run(`INSERT INTO orders (load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    header.load_no, header.stop, header.store, header.account_no, header.address, header.city, header.state,
+    const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    days.openDayId(), header.load_no, header.stop, header.store, header.account_no, header.address, header.city, header.state,
     header.day_no, header.order_date, header.zone, req.user.id, Date.now());
     const orderId = Number(r.lastInsertRowid);
     saveLines(orderId, lines, req.user.id);
@@ -302,6 +305,7 @@ api.put('/orders/:id', requireRole('management'), h((req) => {
 api.delete('/orders/:id', requireRole('management'), h((req) => {
   const order = getOrder(req.params.id);
   run('DELETE FROM orders WHERE id = ?', order.id);
+  days.closeIfDone(order.day_id);
   changed();
 }));
 
@@ -338,7 +342,7 @@ api.post('/orders/:id/assign', requireRole('supervisor'), h((req) => {
   if (!picker) fail(400, 'Choose an employee');
   run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?",
     picker.id, Date.now(), order.id);
-  logEvent(order.id, req.user.id, 'assigned', { to: picker.name });
+  logEvent(order.id, req.user.id, 'assigned', { to: picker.name, toId: picker.id });
   push.notifyUser(picker.id, { title: 'Order assigned to you', body: `Truck ${order.truck ?? '?'} · Stop ${order.stop} · ${order.store}`, url: `/#/order/${order.id}` });
   changed();
   return orderDetail(order.id);
@@ -405,6 +409,7 @@ api.post('/orders/:id/submit', h((req) => {
   } else {
     run("UPDATE orders SET status = 'done', submitted_at = ?, completed_at = ? WHERE id = ?", now, now, order.id);
     logEvent(order.id, req.user.id, 'completed');
+    days.closeIfDone(order.day_id);
   }
   changed();
   return orderDetail(order.id);
@@ -438,7 +443,7 @@ api.post('/orders/:id/lines/:lineId/found', requireRole('supervisor'), h((req) =
   run(`UPDATE order_lines SET picked = picked + ?, out_qty = ?, out_reason = CASE WHEN ? > 0 THEN out_reason END,
        out_status = CASE WHEN ? > 0 THEN 'pending' END, reviewed_by = ?, reviewed_at = ? WHERE id = ?`,
   qty, outQty, outQty, outQty, req.user.id, Date.now(), line.id);
-  logEvent(order.id, req.user.id, 'found', { code: line.code, qty });
+  logEvent(order.id, req.user.id, 'found', { code: line.code, qty, outBy: line.out_by, reason: line.out_reason });
   changed();
   return orderDetail(order.id);
 }));
@@ -450,7 +455,7 @@ api.post('/orders/:id/lines/:lineId/send-back', requireRole('supervisor'), h((re
     run('UPDATE order_lines SET out_qty = 0, out_reason = NULL, out_status = NULL, reviewed_by = ?, reviewed_at = ? WHERE id = ?',
       req.user.id, Date.now(), line.id);
     run("UPDATE orders SET status = 'picking' WHERE id = ?", order.id);
-    logEvent(order.id, req.user.id, 'sent_back', { code: line.code, note: str(req.body.note) });
+    logEvent(order.id, req.user.id, 'sent_back', { code: line.code, note: str(req.body.note), pickerId: order.picker_id, outBy: line.out_by, reason: line.out_reason });
   });
   if (order.picker_id) {
     push.notifyUser(order.picker_id, {
@@ -470,6 +475,7 @@ api.post('/orders/:id/approve', requireRole('supervisor'), h((req) => {
   const now = Date.now();
   run("UPDATE orders SET status = 'done', approved_by = ?, completed_at = ? WHERE id = ?", req.user.id, now, order.id);
   logEvent(order.id, req.user.id, 'approved');
+  days.closeIfDone(order.day_id);
   changed();
   return orderDetail(order.id);
 }));
@@ -481,6 +487,7 @@ api.post('/orders/:id/reopen', requireRole('management'), h((req) => {
        completed_at = NULL, approved_by = NULL WHERE id = ?`, order.id);
   run("UPDATE order_lines SET out_status = 'pending' WHERE order_id = ? AND out_qty > 0", order.id);
   logEvent(order.id, req.user.id, 'reopened');
+  days.reopen(order.day_id);
   changed();
   return orderDetail(order.id);
 }));
@@ -654,6 +661,43 @@ api.put('/settings/trucks', requireRole('admin'), h((req) => {
   setSetting('trucks', list.sort((a, b) => a.truck - b.truck));
   changed();
   return trucks();
+}));
+
+// ---------- pick rates ----------
+// Everyone sees their own rate; supervisors and up see everyone's.
+api.get('/rates', h((req) => {
+  const period = req.query.period === 'week' ? 'week' : 'day';
+  const day = days.displayDay();
+  const rows = rates.compute({
+    dayId: period === 'day' ? day?.id ?? -1 : null,
+    since: period === 'week' ? Date.now() - 7 * 86400000 : null,
+    includeTests: rates.includeTests(),
+  });
+  return {
+    period,
+    target: rates.target(),
+    includeTests: rates.includeTests(),
+    rows: atLeast(req.user, 'supervisor') ? rows : rows.filter((r) => r.userId === req.user.id),
+  };
+}));
+
+api.put('/settings/pick-rate', requireRole('supervisor'), h((req) => {
+  if (req.body.min !== undefined) {
+    const min = int(req.body.min);
+    if (!(min >= 1 && min <= 10000)) fail(400, 'Enter a number of cases per hour');
+    setSetting('pick_rate_min', min);
+  }
+  if (req.body.includeTests !== undefined) setSetting('rates_include_tests', !!req.body.includeTests);
+  changed();
+  return { target: rates.target(), includeTests: rates.includeTests() };
+}));
+
+// ---------- work days ----------
+api.get('/days', requireRole('management'), h(() => days.list()));
+api.get('/days/:id', requireRole('management'), h((req) => {
+  const day = one('SELECT * FROM days WHERE id = ?', int(req.params.id));
+  if (!day) fail(404, 'Day not found');
+  return { ...days.summary(day), top: days.topSellers(day.id), mostOut: days.mostOut(day.id) };
 }));
 
 // ---------- reports ----------

@@ -1,6 +1,7 @@
 // Sample data for trying the app: the real pick list from Truck 1 / Stop 008 plus a few made-up orders.
 // Demo barcodes use the "2" UPC prefix (reserved for in-store use) so they never clash with real products.
 const { one, run } = require('./db');
+const days = require('./days');
 
 const ITEMS = [
   ['00014', 'STELLA LN 2/12'], ['00125', 'BUD LN 4/6'], ['00171', 'BUD CHEL 15/25OZ'],
@@ -53,9 +54,10 @@ function upcCheckDigit(eleven) {
 const demoUpc = (code) => { const body = `200000${code.padStart(5, '0')}`; return body + upcCheckDigit(body); };
 
 function insertOrder(o, now) {
-  const r = run(`INSERT INTO orders (load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  o.load_no, o.stop, o.store, o.account_no || '', o.address, o.city, o.state, o.day_no, o.order_date, o.zone, now);
+  // Demo and test-run orders are flagged so they stay out of pick rates.
+  const r = run(`INSERT INTO orders (day_id, is_test, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_at)
+    VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  days.openDayId(), o.load_no, o.stop, o.store, o.account_no || '', o.address, o.city, o.state, o.day_no, o.order_date, o.zone, now);
   const id = Number(r.lastInsertRowid);
   o.lines.forEach((l, i) => {
     const desc = ITEMS.find(([c]) => c === l.code)[1];

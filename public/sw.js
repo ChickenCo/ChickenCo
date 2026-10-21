@@ -1,11 +1,11 @@
 // Service worker: keeps the app shell available offline and shows push notifications.
 // App files are fetched fresh when online (so updates show up right away) and from cache when not.
-const CACHE = 'pick-shell-v3';
+const CACHE = 'pick-shell-v4';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest', '/css/styles.css',
   '/js/app.js', '/js/api.js', '/js/ui.js', '/js/scanner.js', '/js/upc.js',
   '/js/views/trucks.js', '/js/views/pick.js', '/js/views/review.js', '/js/views/orders.js',
-  '/js/views/items.js', '/js/views/users.js', '/js/views/reports.js', '/js/views/settings.js',
+  '/js/views/items.js', '/js/views/users.js', '/js/views/reports.js', '/js/views/settings.js', '/js/views/rates.js',
   '/vendor/zxing/zxing-reader.js', '/vendor/zxing/zxing_reader.wasm',
   '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
 ];

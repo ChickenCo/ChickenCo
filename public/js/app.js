@@ -10,6 +10,7 @@ import { itemsView, barcodesView } from './views/items.js';
 import { usersView } from './views/users.js';
 import { reportsView } from './views/reports.js';
 import { settingsView, accountView } from './views/settings.js';
+import { ratesView } from './views/rates.js';
 
 const view = document.getElementById('view');
 const topbar = document.getElementById('topbar');
@@ -62,6 +63,7 @@ const routes = [
   [/^items$/, itemsView, 'management'],
   [/^barcodes$/, barcodesView, 'supervisor'],
   [/^reports$/, reportsView, 'management'],
+  [/^rates$/, ratesView, 'supervisor'],
   [/^users$/, usersView, 'admin'],
   [/^settings$/, settingsView, 'admin'],
   [/^account$/, accountView],
@@ -98,6 +100,7 @@ document.getElementById('menuBtn').onclick = async () => {
     { key: '#/', label: 'Trucks' },
     ctx.can('supervisor') && { key: '#/review', html: `Outs to review${badge(ctx.counts.review)}` },
     ctx.can('supervisor') && { key: '#/barcodes', html: `Barcodes to check${badge(ctx.counts.pendingBarcodes)}` },
+    ctx.can('supervisor') && { key: '#/rates', label: 'Pick rates' },
     ctx.can('management') && { key: '#/orders', label: 'Manage orders' },
     ctx.can('management') && { key: '#/items', label: 'Items & barcodes' },
     ctx.can('management') && { key: '#/reports', label: 'Reports' },

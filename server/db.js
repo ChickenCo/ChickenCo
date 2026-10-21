@@ -44,8 +44,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS item_barcodes_code ON item_barcodes(code);
 
+  -- A work day has no fixed hours: it ends when every order on every truck is done.
+  CREATE TABLE IF NOT EXISTS days (
+    id INTEGER PRIMARY KEY,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER
+  );
+
   CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY,
+    day_id INTEGER REFERENCES days(id),
+    is_test INTEGER NOT NULL DEFAULT 0, -- demo data and practice runs (left out of pick rates)
     load_no TEXT NOT NULL,
     stop TEXT NOT NULL DEFAULT '',
     store TEXT NOT NULL,
@@ -113,6 +122,21 @@ db.exec(`
 const one = (sql, ...params) => db.prepare(sql).get(...params);
 const all = (sql, ...params) => db.prepare(sql).all(...params);
 const run = (sql, ...params) => db.prepare(sql).run(...params);
+
+// Upgrade databases created before work days existed.
+const orderCols = all('PRAGMA table_info(orders)').map((c) => c.name);
+if (!orderCols.includes('day_id')) db.exec('ALTER TABLE orders ADD COLUMN day_id INTEGER REFERENCES days(id)');
+if (!orderCols.includes('is_test')) {
+  db.exec('ALTER TABLE orders ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0');
+  db.exec('UPDATE orders SET is_test = 1 WHERE created_by IS NULL'); // demo + test-run orders
+}
+db.exec('CREATE INDEX IF NOT EXISTS orders_day ON orders(day_id)');
+const loose = one(`SELECT COUNT(*) n, MIN(created_at) first, MAX(completed_at) last,
+  SUM(status != 'done') open FROM orders WHERE day_id IS NULL`);
+if (loose.n) {
+  const r = run('INSERT INTO days (started_at, ended_at) VALUES (?, ?)', loose.first, loose.open ? null : loose.last);
+  run('UPDATE orders SET day_id = ? WHERE day_id IS NULL', Number(r.lastInsertRowid));
+}
 
 function tx(fn) {
   db.exec('BEGIN IMMEDIATE');

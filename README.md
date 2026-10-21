@@ -16,6 +16,25 @@ The server keeps one shared database, so everyone sees the same orders live.
 number. A pick list's `LOAD#` decides the truck: 201 is Truck 1, 202 is Truck 2,
 and so on. An admin can change this under Settings.
 
+**The day.** There's no fixed schedule. A day starts with its first order and ends
+when every order on every truck is done ("All trucks loaded"). The top of the Trucks
+screen shows totals across all trucks: cases, picked, left and out. When the day ends,
+it shows the day's **top sellers** and **most out** items, and management gets a
+notification. The next order entered starts a new day.
+
+**Pick rates.**
+- Pick rate is cases picked per hour of active picking, for example *134 cases/hr*.
+  It turns **red** below a target that supervisors set (default 100).
+- Only time spent picking counts. A gap of more than 10 minutes between scans
+  counts as 10 minutes, so breaks don't lower anyone's rate.
+- Next to it: how many items each person marked out, and how many of those a
+  supervisor *found on the shelf*.
+- Employees see their own rate on the Trucks screen and under My account.
+  Supervisors, management and admins see everyone's under **Pick rates**, for
+  today or the last 7 days.
+- Test and demo orders count while trying the app out. Turn this off under
+  Pick rates › Change once real orders start.
+
 **Picking (Picker)**
 1. Open a truck, then a stop, and tap **Start picking**. The order is now yours,
    and other pickers see "<name> is picking this order".
@@ -50,8 +69,9 @@ and so on. An admin can change this under Settings.
   scan and change.
 - **Items & barcodes:** add items, scan a case barcode to link it to an item,
   or paste a whole list as `code, description, barcode`.
-- **Reports:** every out (who marked it and who confirmed it) and finished orders
-  (picker, approver, pick time). Both download as CSV.
+- **Reports:** every out (who marked it and who confirmed it), finished orders
+  (picker, approver, pick time) and **Days** (totals, top sellers and most out for
+  each day). All of them download as CSV.
 
 **Admin**
 - Everything above.
@@ -158,6 +178,8 @@ server/            Node.js + Express API, SQLite via node:sqlite
   auth.js          username + PIN logins, roles
   push.js          phone notifications (Web Push)
   barcode.js       UPC / EAN / ITF-14 normalisation to GTIN-14
+  days.js          work days: totals, top sellers, end-of-day notification
+  rates.js         pick rate (cases per active hour)
   demo.js          sample data and the Chuck's Carry Out test run
 test/              automated tests (npm test)
 public/            the phone app (plain JavaScript modules, no build step)

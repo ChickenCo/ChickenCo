@@ -2,6 +2,7 @@
 import { api } from '../api.js';
 import { esc, toast, ask, confirmBox, fmtTime, ROLE_LABEL } from '../ui.js';
 import { upcSvg } from '../upc.js';
+import { myRateHtml } from './rates.js';
 
 const view = document.getElementById('view');
 
@@ -100,8 +101,10 @@ export async function accountView(ctx) {
   }
 
   async function render() {
-    const state = await pushState().catch(() => 'unsupported');
-    const why = ctx.can('supervisor')
+    const [state, rate] = await Promise.all([pushState().catch(() => 'unsupported'), myRateHtml(ctx).catch(() => '')]);
+    const why = ctx.can('management')
+      ? 'Get a notification when a picker marks something out, and when all trucks are loaded.'
+      : ctx.can('supervisor')
       ? 'Get a notification when a picker marks something out.'
       : 'Get a notification when a supervisor sends an item back to you or assigns you an order.';
     view.innerHTML = `
@@ -110,6 +113,7 @@ export async function accountView(ctx) {
         <p class="muted">Username <b>${esc(ctx.user.username)}</b> · ${ROLE_LABEL[ctx.user.role]}</p>
         <button class="btn btn-ghost" data-act="pin">Change my PIN</button>
       </section>
+      ${rate}
       <section class="card">
         <h2>Notifications</h2>
         <p class="muted small">${why}</p>

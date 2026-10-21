@@ -261,6 +261,30 @@ dialog::backdrop { background: rgba(20,14,10,.55); }
 .pill-poc { background: #1f1b17; color: #fff; text-transform: uppercase; letter-spacing: .06em; }
 .poc-note { margin-top: 12px; }
 .login-slip { font-size: 1.2rem; background: var(--bg); border-radius: 10px; padding: 12px 16px; }
+/* Day totals, pick rates */
+.day-card .row strong { font-size: 1.05rem; }
+.day-card.day-done { border-color: var(--ok); background: var(--ok-bg); }
+.day-card.day-done strong { color: var(--ok); }
+.day-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; text-align: center; }
+.day-stats b { display: block; font-size: 1.35rem; }
+.day-stats span { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.day-card p { margin: 8px 0 0; }
+.rank { margin: 0; padding-left: 22px; }
+.rank li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.rank li > * { vertical-align: middle; }
+.rank li { display: list-item; }
+.rank .line-main { display: inline-flex; width: calc(100% - 90px); }
+.rank b { font-size: 1.1rem; }
+.rate { font-weight: 800; font-size: 1.15rem; white-space: nowrap; color: var(--ok); }
+.rate small { font-size: .75rem; font-weight: 600; color: var(--muted); }
+.rate-big { font-size: 1.9rem; }
+.rate-low, .rate.rate-low { color: var(--danger); }
+.my-rate { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.my-rate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.my-rate-block { display: flex; flex-direction: column; gap: 2px; }
+.rate-target { margin-bottom: 10px; }
+tr.click { cursor: pointer; }
+tr.click:active td { background: var(--bg); }
 .app-footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 24px; }
 
 /* Tabs, tables */
