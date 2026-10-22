@@ -10,6 +10,7 @@ const days = require('./days');
 const rates = require('./rates');
 const vip = require('./vip');
 const { APP_VERSION } = require('./version');
+const backup = require('./backup');
 
 const { requireRole, atLeast } = auth;
 const api = express.Router();
@@ -942,6 +943,9 @@ api.get('/admin/backup', requireRole('admin'), h((req, res) => {
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
   res.download(file, `pick-backup-${new Date().toISOString().slice(0, 10)}.db`, () => fs.unlink(file, () => {}));
 }));
+
+api.get('/admin/backups', requireRole('admin'), h(() => backup.status()));
+api.post('/admin/backups', requireRole('admin'), h(async () => { await backup.runBackup('by hand'); return backup.status(); }));
 
 api.post('/admin/demo', requireRole('admin'), h(() => {
   const result = tx(() => demo.load({ hashPin: auth.hashPin }));

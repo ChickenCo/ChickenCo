@@ -2,6 +2,7 @@
 // when every order on every truck is done. The next order after that starts a new day.
 const { one, all, run } = require('./db');
 const push = require('./push');
+const backup = require('./backup');
 
 function openDayId() {
   const open = one('SELECT id FROM days WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1');
@@ -60,6 +61,7 @@ function closeIfDone(dayId) {
       + `${top ? ` · Top seller: ${top.description} (${top.cases})` : ''}${worst ? ` · Most out: ${worst.description} (${worst.cases})` : ''}`,
     url: '/#/',
   });
+  backup.afterDayEnd();
   return true;
 }
 
