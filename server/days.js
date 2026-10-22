@@ -53,9 +53,11 @@ function closeIfDone(dayId) {
   run('UPDATE days SET ended_at = ? WHERE id = ?', Date.now(), dayId);
   const t = totals(dayId);
   const [top] = topSellers(dayId, 1);
+  const [worst] = mostOut(dayId, 1);
   push.notifyRole('management', {
     title: 'All trucks loaded',
-    body: `${t.cases.toLocaleString()} cases on ${t.orders} orders · ${t.outs} out${top ? ` · Top seller: ${top.description} (${top.cases})` : ''}`,
+    body: `${t.cases.toLocaleString()} cases on ${t.orders} orders · ${t.outs} out`
+      + `${top ? ` · Top seller: ${top.description} (${top.cases})` : ''}${worst ? ` · Most out: ${worst.description} (${worst.cases})` : ''}`,
     url: '/#/',
   });
   return true;

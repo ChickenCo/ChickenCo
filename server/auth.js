@@ -2,7 +2,8 @@
 const crypto = require('node:crypto');
 const { one, run } = require('./db');
 
-const ROLES = ['picker', 'supervisor', 'management', 'admin'];
+// Drivers rank below pickers: they can see orders and leave notes but not pick.
+const ROLES = ['driver', 'picker', 'supervisor', 'management', 'admin'];
 const RANK = Object.fromEntries(ROLES.map((r, i) => [r, i]));
 const COOKIE = 'pick_session';
 const SESSION_DAYS = 30;

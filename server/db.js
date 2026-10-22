@@ -9,18 +9,21 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(process.env.DB_FILE || path.join(DATA_DIR, 'pick.db'));
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
+const usersTable = (name) => `
+  CREATE TABLE IF NOT EXISTS ${name} (
     id INTEGER PRIMARY KEY,
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     name TEXT NOT NULL,
     pin_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('picker','supervisor','management','admin')),
+    role TEXT NOT NULL CHECK (role IN ('driver','picker','supervisor','management','admin')),
     active INTEGER NOT NULL DEFAULT 1,
     failed_logins INTEGER NOT NULL DEFAULT 0,
     locked_until INTEGER,
     created_at INTEGER NOT NULL
-  );
+  );`;
+
+db.exec(`
+  ${usersTable('users')}
 
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
@@ -113,6 +116,36 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+  -- Notes for pickers and loaders: on one order, on every order for a store, or on a truck's load.
+  CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY,
+    scope TEXT NOT NULL CHECK (scope IN ('order','store','truck')),
+    order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+    store_key TEXT,
+    truck INTEGER,
+    day_id INTEGER REFERENCES days(id) ON DELETE CASCADE, -- truck notes: NULL means every day
+    text TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS notes_order ON notes(order_id);
+
+  CREATE TABLE IF NOT EXISTS pin_requests (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    resolved_at INTEGER
+  );
+
+  -- One alert per item per day when it's marked out on several orders.
+  CREATE TABLE IF NOT EXISTS out_alerts (
+    day_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    orders INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (day_id, code)
+  );
+
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -122,6 +155,15 @@ db.exec(`
 const one = (sql, ...params) => db.prepare(sql).get(...params);
 const all = (sql, ...params) => db.prepare(sql).all(...params);
 const run = (sql, ...params) => db.prepare(sql).run(...params);
+
+// Upgrade databases created before the driver role existed (SQLite can't alter a CHECK in place).
+if (!one("SELECT sql FROM sqlite_master WHERE name = 'users'").sql.includes("'driver'")) {
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`BEGIN; ${usersTable('users_new')}
+    INSERT INTO users_new SELECT id, username, name, pin_hash, role, active, failed_logins, locked_until, created_at FROM users;
+    DROP TABLE users; ALTER TABLE users_new RENAME TO users; COMMIT;`);
+  db.exec('PRAGMA foreign_keys = ON');
+}
 
 // Upgrade databases created before work days existed.
 const orderCols = all('PRAGMA table_info(orders)').map((c) => c.name);

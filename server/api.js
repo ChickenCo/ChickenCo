@@ -8,6 +8,8 @@ const { normalizeBarcode, displayBarcode } = require('./barcode');
 const demo = require('./demo');
 const days = require('./days');
 const rates = require('./rates');
+const vip = require('./vip');
+const { APP_VERSION } = require('./version');
 
 const { requireRole, atLeast } = auth;
 const api = express.Router();
@@ -40,10 +42,23 @@ const h = (fn) => async (req, res) => {
 const str = (v, max = 200) => String(v ?? '').trim().slice(0, max);
 const int = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : NaN);
 
-function logEvent(orderId, userId, type, detail) {
+function logEvent(orderId, userId, type, detail, at = Date.now()) {
   run('INSERT INTO events (order_id, user_id, type, detail, at) VALUES (?, ?, ?, ?, ?)',
-    orderId, userId, type, detail ? JSON.stringify(detail) : null, Date.now());
+    orderId, userId, type, detail ? JSON.stringify(detail) : null, at);
 }
+
+// Scans saved on a phone while it had no signal arrive later; keep the time they really happened
+// (within the last 12 hours) so pick rates stay right.
+function scanTime(req) {
+  const now = Date.now();
+  const at = int(req.body.at);
+  return at > now - 12 * 3600000 && at <= now ? at : now;
+}
+
+// Drivers can read orders and leave notes; picking needs the picker role or higher.
+const canPick = (user) => atLeast(user, 'picker');
+const canNote = (user) => user.role === 'driver' || atLeast(user, 'supervisor');
+const storeKey = (o) => String(o.account_no || o.store).trim().toUpperCase();
 
 // ---------- trucks ----------
 const DEFAULT_TRUCKS = [1, 2, 3, 4, 5, 6].map((n) => ({ truck: n, load: String(200 + n) }));
@@ -84,6 +99,10 @@ function orderDetail(id) {
   o.lines = all(`SELECT l.*, ob.name AS out_by_name, rb.name AS reviewed_by_name FROM order_lines l
     LEFT JOIN users ob ON ob.id = l.out_by LEFT JOIN users rb ON rb.id = l.reviewed_by
     WHERE l.order_id = ? ORDER BY l.seq`, o.id);
+  o.notes = all(`SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id
+    WHERE (n.scope = 'order' AND n.order_id = ?) OR (n.scope = 'store' AND n.store_key = ?)
+      OR (n.scope = 'truck' AND n.truck = ? AND (n.day_id IS NULL OR n.day_id = ?))
+    ORDER BY CASE n.scope WHEN 'order' THEN 0 WHEN 'store' THEN 1 ELSE 2 END, n.created_at`, o.id, storeKey(o), o.truck ?? -1, o.day_id ?? -1);
   return o;
 }
 
@@ -95,6 +114,7 @@ function getLine(order, lineId) {
 
 // Pickers may only change an order they have started; supervisors and up can always help.
 function assertCanPick(req, order) {
+  if (!canPick(req.user)) fail(403, 'Drivers can view orders and leave notes, but not pick');
   if (order.status === 'done') fail(409, 'This order is already finished');
   if (atLeast(req.user, 'supervisor')) return;
   if (order.status !== 'picking' || order.picker_id !== req.user.id) {
@@ -117,6 +137,17 @@ api.post('/logout', h((req, res) => {
   auth.clearSessionCookie(res);
 }));
 
+// "Forgot PIN" from the sign-in screen. Always answers the same way so it can't be used to find usernames.
+api.post('/pin-request', h((req) => {
+  const u = one('SELECT * FROM users WHERE username = ? AND active = 1', str(req.body.username, 40));
+  if (u && !one('SELECT 1 FROM pin_requests WHERE user_id = ? AND resolved_at IS NULL', u.id)) {
+    run('INSERT INTO pin_requests (user_id, created_at) VALUES (?, ?)', u.id, Date.now());
+    push.notifyRole('admin', { title: 'PIN reset requested', body: `${u.name} (${u.username}) forgot their PIN.`, url: '/#/users' });
+    changed();
+  }
+  return { ok: true, message: 'Your administrator has been asked to reset your PIN.' };
+}));
+
 api.use((req, res, next) => (req.user ? next() : res.status(401).json({ error: 'Please sign in' })));
 
 api.get('/me', h((req) => ({
@@ -124,6 +155,7 @@ api.get('/me', h((req) => ({
   trucks: trucks(),
   vapidKey: push.publicKey(),
   version,
+  appVersion: APP_VERSION,
   ...(atLeast(req.user, 'admin') && {
     storageWarning: STORAGE_WARNING,
     dbCreatedAt: getSetting('db_created_at'),
@@ -133,6 +165,8 @@ api.get('/me', h((req) => ({
 
 api.get('/ping', h((req) => ({
   version,
+  appVersion: APP_VERSION,
+  pinRequests: atLeast(req.user, 'admin') ? one('SELECT COUNT(*) n FROM pin_requests WHERE resolved_at IS NULL').n : 0,
   review: atLeast(req.user, 'supervisor') ? one("SELECT COUNT(*) n FROM orders WHERE status = 'review'").n : 0,
   pendingBarcodes: atLeast(req.user, 'supervisor') ? one("SELECT COUNT(*) n FROM item_barcodes WHERE status = 'pending'").n : 0,
 })));
@@ -271,20 +305,60 @@ function saveLines(orderId, lines, userId) {
   existing.filter((e) => !keep.has(e.id)).forEach((e) => run('DELETE FROM order_lines WHERE id = ?', e.id));
 }
 
-api.post('/orders', requireRole('management'), h((req) => {
-  const { header, lines } = readOrderBody(req.body);
-  const id = tx(() => {
+function createOrder(body, userId, how = 'created') {
+  const { header, lines } = readOrderBody(body);
+  return tx(() => {
     const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     days.openDayId(), header.load_no, header.stop, header.store, header.account_no, header.address, header.city, header.state,
-    header.day_no, header.order_date, header.zone, req.user.id, Date.now());
+    header.day_no, header.order_date, header.zone, userId, Date.now());
     const orderId = Number(r.lastInsertRowid);
-    saveLines(orderId, lines, req.user.id);
-    logEvent(orderId, req.user.id, 'created');
+    saveLines(orderId, lines, userId);
+    logEvent(orderId, userId, how);
     return orderId;
   });
+}
+
+api.post('/orders', requireRole('management'), h((req) => {
+  const id = createOrder(req.body, req.user.id);
   changed();
   return orderDetail(id);
+}));
+
+// VIP import: read a file into orders and show them first; nothing is saved until /orders/import.
+api.post('/orders/import/preview', requireRole('management'), h((req) => {
+  const text = String(req.body.text || '');
+  if (!text.trim()) fail(400, 'The file is empty');
+  const { orders, warnings } = vip.parseImport(text, str(req.body.filename));
+  const day = days.displayDay();
+  return {
+    warnings,
+    orders: orders.map((o) => {
+      const dup = day && !day.ended_at && one('SELECT id FROM orders WHERE day_id = ? AND load_no = ? AND stop = ? AND store = ?',
+        day.id, o.load_no, o.stop, o.store);
+      return {
+        ...o,
+        truck: truckForLoad(o.load_no),
+        duplicateOf: dup ? dup.id : null,
+        newItems: [...new Set(o.lines.filter((l) => !one('SELECT 1 FROM items WHERE code = ?', l.code.toUpperCase())).map((l) => l.code))],
+        cases: o.lines.reduce((s, l) => s + l.qty, 0),
+      };
+    }),
+  };
+}));
+
+api.post('/orders/import', requireRole('management'), h((req) => {
+  const list = Array.isArray(req.body.orders) ? req.body.orders.slice(0, 500) : [];
+  const created = [];
+  const skipped = [];
+  for (const o of list) {
+    try { created.push(createOrder(o, req.user.id, 'imported')); } catch (err) {
+      if (!(err instanceof HttpError)) throw err;
+      skipped.push({ store: o.store, stop: o.stop, error: err.message });
+    }
+  }
+  if (created.length) changed();
+  return { created: created.length, skipped };
 }));
 
 api.put('/orders/:id', requireRole('management'), h((req) => {
@@ -311,6 +385,7 @@ api.delete('/orders/:id', requireRole('management'), h((req) => {
 
 api.post('/orders/:id/start', h((req) => {
   const order = getOrder(req.params.id);
+  if (!canPick(req.user)) fail(403, 'Drivers can view orders and leave notes, but not pick');
   if (order.status === 'done') fail(409, 'This order is already finished');
   if (order.status === 'review') fail(409, 'This order is waiting for a supervisor');
   if (order.status === 'picking' && order.picker_id !== req.user.id) {
@@ -339,7 +414,7 @@ api.post('/orders/:id/assign', requireRole('supervisor'), h((req) => {
   const order = getOrder(req.params.id);
   if (order.status === 'done' || order.status === 'review') fail(409, 'Only open or in-progress orders can be assigned');
   const picker = one('SELECT * FROM users WHERE id = ? AND active = 1', int(req.body.userId));
-  if (!picker) fail(400, 'Choose an employee');
+  if (!picker || !canPick(picker)) fail(400, 'Choose an employee who picks');
   run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?",
     picker.id, Date.now(), order.id);
   logEvent(order.id, req.user.id, 'assigned', { to: picker.name, toId: picker.id });
@@ -359,7 +434,7 @@ api.post('/orders/:id/lines/:lineId/pick', h((req) => {
   const outQty = Math.min(line.out_qty, line.qty - picked);
   run(`UPDATE order_lines SET picked = ?, out_qty = ?, out_reason = CASE WHEN ? > 0 THEN out_reason END,
        out_status = CASE WHEN ? > 0 THEN out_status END WHERE id = ?`, picked, outQty, outQty, outQty, line.id);
-  logEvent(order.id, req.user.id, 'picked', { code: line.code, from: line.picked, to: picked, via: str(req.body.via, 10) || 'manual' });
+  logEvent(order.id, req.user.id, 'picked', { code: line.code, from: line.picked, to: picked, via: str(req.body.via, 10) || 'manual' }, scanTime(req));
   changed();
   return orderDetail(order.id);
 }));
@@ -374,8 +449,9 @@ api.post('/orders/:id/lines/:lineId/out', h((req) => {
   const qty = int(req.body.qty);
   if (!(qty >= 1) || qty > remaining) fail(400, `Short quantity must be between 1 and ${remaining}`);
   run(`UPDATE order_lines SET out_qty = ?, out_reason = ?, out_status = 'pending', out_by = ?, out_at = ?,
-       reviewed_by = NULL, reviewed_at = NULL WHERE id = ?`, qty, reason, req.user.id, Date.now(), line.id);
-  logEvent(order.id, req.user.id, 'out', { code: line.code, qty, reason });
+       reviewed_by = NULL, reviewed_at = NULL WHERE id = ?`, qty, reason, req.user.id, scanTime(req), line.id);
+  logEvent(order.id, req.user.id, 'out', { code: line.code, qty, reason }, scanTime(req));
+  checkRepeatOut(order, line);
   changed();
   return orderDetail(order.id);
 }));
@@ -385,7 +461,7 @@ api.post('/orders/:id/lines/:lineId/clear-out', h((req) => {
   assertCanPick(req, order);
   const line = getLine(order, req.params.lineId);
   run('UPDATE order_lines SET out_qty = 0, out_reason = NULL, out_status = NULL WHERE id = ?', line.id);
-  logEvent(order.id, req.user.id, 'out_cleared', { code: line.code });
+  logEvent(order.id, req.user.id, 'out_cleared', { code: line.code }, scanTime(req));
   changed();
   return orderDetail(order.id);
 }));
@@ -413,6 +489,133 @@ api.post('/orders/:id/submit', h((req) => {
   }
   changed();
   return orderDetail(order.id);
+}));
+
+// The same item marked out on several orders in one day is probably a stock problem: tell supervisors once.
+function checkRepeatOut(order, line) {
+  if (!order.day_id) return;
+  const n = one(`SELECT COUNT(DISTINCT o.id) AS n FROM order_lines l JOIN orders o ON o.id = l.order_id
+    WHERE o.day_id = ? AND l.code = ? AND l.out_qty > 0 AND COALESCE(l.out_reason, '') != 'vip'`, order.day_id, line.code).n;
+  if (n < getSetting('repeat_out_min', 3)) return;
+  const fresh = run('INSERT OR IGNORE INTO out_alerts (day_id, code, orders, at) VALUES (?, ?, ?, ?)', order.day_id, line.code, n, Date.now()).changes;
+  if (fresh) {
+    push.notifyRole('supervisor', {
+      title: `Out on ${n} orders today`,
+      body: `${line.description} (#${line.code}) has been marked out on ${n} orders. It may be a stock problem.`,
+      url: '/#/floor',
+    });
+  } else {
+    run('UPDATE out_alerts SET orders = ? WHERE day_id = ? AND code = ?', n, order.day_id, line.code);
+  }
+}
+
+// "Next order": take the lowest unstarted stop on a truck.
+api.post('/trucks/:truck/next', h((req) => {
+  if (!canPick(req.user)) fail(403, 'Drivers can view orders and leave notes, but not pick');
+  const day = days.displayDay();
+  const load = loadForTruck(req.params.truck);
+  const id = day && load && tx(() => {
+    const o = one(`SELECT id FROM orders WHERE day_id = ? AND load_no = ? AND status = 'open'
+      ORDER BY CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, load);
+    if (!o) return null;
+    run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?", req.user.id, Date.now(), o.id);
+    logEvent(o.id, req.user.id, 'started');
+    return o.id;
+  });
+  if (!id) fail(404, 'Every order on this truck has been started');
+  changed();
+  return orderDetail(id);
+}));
+
+// Barcodes for the items on one order, so a phone can still match scans with no signal.
+api.get('/orders/:id/barcodes', h((req) => {
+  const order = getOrder(req.params.id);
+  return all(`SELECT b.gtin, b.code FROM item_barcodes b WHERE b.code IN (SELECT code FROM order_lines WHERE order_id = ?)`, order.id);
+}));
+
+// ---------- notes ----------
+api.get('/trucks/:truck/notes', h((req) => {
+  const day = days.displayDay();
+  return all(`SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id
+    WHERE n.scope = 'truck' AND n.truck = ? AND (n.day_id IS NULL OR n.day_id = ?) ORDER BY n.created_at`, int(req.params.truck), day?.id ?? -1);
+}));
+
+api.post('/notes', h((req) => {
+  if (!canNote(req.user)) fail(403, 'Only drivers, supervisors and management can add notes');
+  const text = str(req.body.text, 500);
+  if (!text) fail(400, 'Type a note');
+  const scope = str(req.body.scope);
+  const now = Date.now();
+  if (scope === 'truck') {
+    const truck = int(req.body.truck);
+    if (!trucks().some((t) => t.truck === truck)) fail(400, 'Choose a truck');
+    let dayId = null;
+    if (!req.body.everyDay) {
+      const day = days.displayDay();
+      dayId = day && !day.ended_at ? day.id : days.openDayId();
+    }
+    run("INSERT INTO notes (scope, truck, day_id, text, user_id, created_at) VALUES ('truck', ?, ?, ?, ?, ?)", truck, dayId, text, req.user.id, now);
+  } else if (scope === 'order' || scope === 'store') {
+    const order = getOrder(req.body.orderId);
+    run('INSERT INTO notes (scope, order_id, store_key, text, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      scope, scope === 'order' ? order.id : null, scope === 'store' ? storeKey(order) : null, text, req.user.id, now);
+  } else fail(400, 'Unknown note type');
+  changed();
+}));
+
+api.delete('/notes/:id', h((req) => {
+  const n = one('SELECT * FROM notes WHERE id = ?', int(req.params.id));
+  if (!n) fail(404, 'Note not found');
+  if (n.user_id !== req.user.id && !atLeast(req.user, 'management')) fail(403, 'Only the person who wrote it or management can remove a note');
+  run('DELETE FROM notes WHERE id = ?', n.id);
+  changed();
+}));
+
+// ---------- live floor view ----------
+api.get('/floor', requireRole('supervisor'), h(() => {
+  const day = days.displayDay();
+  if (!day) return { day: null, people: [], trucks: [], repeatOuts: [], target: rates.target() };
+  const orders = all(`${ORDER_SELECT} WHERE o.day_id = ?`, day.id).map(withTruck);
+  const rateBy = new Map(rates.compute({ dayId: day.id, includeTests: rates.includeTests() }).map((r) => [r.userId, r]));
+  const lastBy = new Map(all(`SELECT e.user_id, MAX(e.at) AS at FROM events e JOIN orders o ON o.id = e.order_id
+    WHERE o.day_id = ? AND e.type IN ('started','picked','out','out_cleared','submitted','completed') GROUP BY e.user_id`, day.id)
+    .map((r) => [r.user_id, r.at]));
+  const people = all("SELECT id, name, role FROM users WHERE active = 1 AND role != 'driver'")
+    .map((u) => {
+      // If someone holds several orders, show the one they started most recently.
+      const holding = orders.filter((o) => o.status === 'picking' && o.picker_id === u.id);
+      const current = holding.sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0];
+      const r = rateBy.get(u.id);
+      return {
+        userId: u.id, name: u.name, role: u.role, lastAt: lastBy.get(u.id) || null,
+        rate: r?.rate ?? null, cases: r?.cases ?? 0,
+        order: current && { id: current.id, truck: current.truck, stop: current.stop, store: current.store,
+          units: current.units, done: current.units_picked + current.units_out, others: holding.length - 1 },
+      };
+    })
+    // Pickers always show; others only when they've picked today.
+    .filter((p) => p.role === 'picker' || p.order || p.lastAt)
+    .sort((a, b) => (!!b.order - !!a.order) || (b.lastAt || 0) - (a.lastAt || 0));
+  return {
+    day: { id: day.id, started_at: day.started_at, ended_at: day.ended_at },
+    target: rates.target(),
+    people,
+    trucks: trucks().map(({ truck }) => {
+      const mine = orders.filter((o) => o.truck === truck);
+      return { truck, open: mine.filter((o) => o.status === 'open').length, picking: mine.filter((o) => o.status === 'picking').length,
+        review: mine.filter((o) => o.status === 'review').length, done: mine.filter((o) => o.status === 'done').length };
+    }),
+    repeatOuts: all(`SELECT a.code, a.orders, a.at, (SELECT MAX(description) FROM order_lines WHERE code = a.code) AS description
+      FROM out_alerts a WHERE a.day_id = ? ORDER BY a.orders DESC`, day.id),
+  };
+}));
+
+// ---------- PIN reset requests ----------
+api.get('/pin-requests', requireRole('admin'), h(() => all(`SELECT r.id, r.created_at, u.id AS user_id, u.name, u.username
+  FROM pin_requests r JOIN users u ON u.id = r.user_id WHERE r.resolved_at IS NULL ORDER BY r.created_at`)));
+api.post('/pin-requests/:id/dismiss', requireRole('admin'), h((req) => {
+  run('UPDATE pin_requests SET resolved_at = ? WHERE id = ?', Date.now(), int(req.params.id));
+  changed();
 }));
 
 // ---------- supervisor review ----------
@@ -616,7 +819,7 @@ api.post('/items/import', requireRole('management'), h((req) => {
 
 // ---------- users ----------
 api.get('/employees', requireRole('supervisor'), h(() =>
-  all('SELECT id, name, username, role FROM users WHERE active = 1 ORDER BY name')));
+  all("SELECT id, name, username, role FROM users WHERE active = 1 AND role != 'driver' ORDER BY name")));
 
 api.get('/users', requireRole('admin'), h(() =>
   all('SELECT id, username, name, role, active, created_at FROM users ORDER BY active DESC, name')
@@ -647,6 +850,7 @@ api.put('/users/:id', requireRole('admin'), h((req) => {
   if (req.body.pin) {
     if (!auth.validPin(req.body.pin)) fail(400, 'PIN must be 4 to 8 digits');
     run('UPDATE users SET pin_hash = ?, failed_logins = 0, locked_until = NULL WHERE id = ?', auth.hashPin(req.body.pin), u.id);
+    run('UPDATE pin_requests SET resolved_at = ? WHERE user_id = ? AND resolved_at IS NULL', Date.now(), u.id);
   }
   // Signing out a deactivated or re-PINned user everywhere.
   if (!active || req.body.pin) run('DELETE FROM sessions WHERE user_id = ? AND token != ?', u.id, req.sessionToken || '');
@@ -710,6 +914,20 @@ api.get('/reports/outs', requireRole('management'), h((req) => {
     LEFT JOIN users ob ON ob.id = l.out_by LEFT JOIN users rb ON rb.id = l.reviewed_by
     WHERE l.out_qty > 0 AND COALESCE(l.out_at, o.created_at) BETWEEN ? AND ?
     ORDER BY l.out_at DESC`, from, to).map((r) => ({ ...r, truck: truckForLoad(r.load_no), reason_label: OUT_REASONS[r.out_reason] || r.out_reason }));
+}));
+
+// Which items run out most often over a period (for purchasing).
+api.get('/reports/out-trends', requireRole('management'), h((req) => {
+  const from = int(req.query.from) || 0;
+  const to = int(req.query.to) || Date.now();
+  return all(`SELECT l.code, MAX(l.description) AS description, COUNT(*) AS times, SUM(l.out_qty) AS cases,
+      COUNT(DISTINCT o.store) AS stores, COUNT(DISTINCT o.day_id) AS days,
+      SUM(CASE WHEN l.out_reason = 'vip' THEN l.out_qty ELSE 0 END) AS vip_cases,
+      SUM(CASE WHEN l.out_reason = 'cant_find' THEN 1 ELSE 0 END) AS cant_find,
+      MAX(COALESCE(l.out_at, o.created_at)) AS last_at
+    FROM order_lines l JOIN orders o ON o.id = l.order_id
+    WHERE l.out_qty > 0 AND COALESCE(l.out_at, o.created_at) BETWEEN ? AND ?
+    GROUP BY l.code ORDER BY cases DESC, times DESC LIMIT 200`, from, to);
 }));
 
 api.get('/reports/orders', requireRole('management'), h((req) => {
