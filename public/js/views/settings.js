@@ -28,6 +28,7 @@ export async function settingsView(ctx) {
           <button class="btn btn-primary" data-act="saveTrucks">Save trucks</button>
         </div>
       </section>
+      <section class="card" id="backupBox"><h2>Backups</h2><p class="muted small">Loading…</p></section>
       <section class="card">
         <h2>Test run</h2>
         <p class="muted small">Adds a fresh copy of the real Chuck's Carry Out pick list (Truck 1, Stop 008, 24 lines, 113 cases, 01172 printed *OUT) so anyone can practice picking it start to finish. Use <b>Print test barcodes</b> below to scan without real product.</p>
@@ -36,7 +37,6 @@ export async function settingsView(ctx) {
       <section class="card">
         <h2>Data</h2>
         <div class="toolbar">
-          <a class="btn btn-ghost" href="/api/admin/backup" download>Download backup</a>
           <button class="btn btn-ghost" data-act="demo">Load demo data</button>
           <button class="btn btn-ghost" data-act="labels">Print test barcodes</button>
         </div>
@@ -45,6 +45,7 @@ export async function settingsView(ctx) {
         <p class="muted small">Database created ${fmtTime(srv.dbCreatedAt)} · server started ${fmtTime(srv.serverStartedAt)}.
           If the database keeps showing as created when the server started, data is being wiped on restart.</p>
       </section>`;
+    loadBackups();
     view.querySelectorAll('.truck-row input').forEach((inp) => {
       inp.oninput = () => { const r = rows[Number(inp.closest('.truck-row').dataset.i)]; r[inp.name] = inp.name === 'truck' ? Number(inp.value) : inp.value.trim(); };
     });
@@ -76,6 +77,28 @@ export async function settingsView(ctx) {
       <div class="labels">${labels.map((l) => `<div class="label">${upcSvg(l.upc)}<strong>#${esc(l.code)}</strong><span>${esc(l.description)}</span></div>`).join('')}</div>`;
   };
   ctx.actions.back = render;
+
+  async function loadBackups() {
+    const box = document.getElementById('backupBox');
+    if (!box) return;
+    const b = await api.get('/admin/backups').catch(() => null);
+    if (!b) return;
+    box.innerHTML = `
+      <h2>Backups</h2>
+      <p class="small">${b.at ? `Last backup <b>${fmtTime(b.at)}</b> (${esc(b.reason)})${b.error ? ` · <b class="text-danger">failed: ${esc(b.error)}</b>` : ''}` : 'No backup yet. The first one runs a minute after the server starts.'}</p>
+      <ul class="plain small">
+        <li>On the server's disk: ${b.local ? '✓ saved' : '—'} (the newest ${b.keep} are kept)</li>
+        <li>Outside storage: ${b.offsiteConfigured ? (b.offsite === 'uploaded' ? '✓ uploaded' : esc(b.offsite || 'waiting')) : '<b class="text-warn">not set up</b>'}</li>
+      </ul>
+      <p class="muted small">Backups run every night and whenever all trucks are loaded.${b.offsiteConfigured ? '' : ' To also keep copies outside Render (recommended), add the BACKUP_S3_ settings described in the README.'}</p>
+      <div class="toolbar"><button class="btn btn-ghost" data-act="backupNow">Back up now</button>
+        <a class="btn btn-ghost" href="/api/admin/backup" download>Download a copy</a></div>`;
+  }
+  ctx.actions.backupNow = async () => {
+    toast('Backing up…');
+    try { const s = await api.post('/admin/backups'); toast(s.error ? `Backup failed: ${s.error}` : 'Backup saved', s.error ? 'error' : 'ok'); } catch (err) { toast(err.message, 'error'); }
+    loadBackups();
+  };
   ctx.actions.print = () => window.print();
 
   render();

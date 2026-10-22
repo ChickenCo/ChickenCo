@@ -2,6 +2,7 @@
 import { api } from '../api.js';
 import { esc, toast, askQty, choose, confirmBox, fmtTime, UNIT_SHORT, OUT_REASONS } from '../ui.js';
 import { orderHeader, lineRow } from './pick.js';
+import { notesHtml, addNote, deleteNote } from '../notes.js';
 
 const view = document.getElementById('view');
 
@@ -45,6 +46,7 @@ export async function reviewView(ctx, id) {
     view.innerHTML = `
       ${orderHeader(o, ctx)}
       ${o.status !== 'review' ? '<div class="banner">This order is not waiting for review anymore.</div>' : ''}
+      ${notesHtml(o.notes, ctx)}
       <p class="muted small">Picked by <b>${esc(o.picker_name || '—')}</b>. Check the shelf for each out item.</p>
       <h2 class="section-title">Outs (${outs.length})</h2>
       ${outs.map(outCard).join('')}
@@ -83,6 +85,8 @@ export async function reviewView(ctx, id) {
     try { await api.post(`/orders/${o.id}/approve`); toast('Order approved', 'ok'); location.hash = '#/review'; } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.pick = () => { location.hash = `#/order/${o.id}`; };
+  ctx.actions.addNote = async () => { if (await addNote({ orderId: o.id, truck: o.truck })) ctx.refresh(); };
+  ctx.actions.delNote = async (noteId) => { if (await deleteNote(noteId)) ctx.refresh(); };
 
   ctx.refresh = async () => update(await api.get(`/orders/${id}`));
   render();

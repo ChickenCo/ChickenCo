@@ -15,7 +15,7 @@ export const STATUS = {
   review: ['Needs review', 'pill-danger'],
   done: ['Done', 'pill-ok'],
 };
-export const ROLE_LABEL = { picker: 'Picker', supervisor: 'Supervisor', management: 'Management', admin: 'Admin' };
+export const ROLE_LABEL = { driver: 'Driver', picker: 'Picker', supervisor: 'Supervisor', management: 'Management', admin: 'Admin' };
 
 export const statusPill = (s) => `<span class="pill ${STATUS[s][1]}">${STATUS[s][0]}</span>`;
 

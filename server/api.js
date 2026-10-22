@@ -445,7 +445,8 @@ api.post('/orders/:id/lines/:lineId/out', h((req) => {
   assertCanPick(req, order);
   const line = getLine(order, req.params.lineId);
   const reason = str(req.body.reason);
-  if (!['out_of_stock', 'cant_find'].includes(reason)) fail(400, 'Choose a reason');
+  // 'vip' is only accepted when undoing a scan that had cleared a VIP *OUT.
+  if (!['out_of_stock', 'cant_find', ...(req.body.undo ? ['vip'] : [])].includes(reason)) fail(400, 'Choose a reason');
   const remaining = line.qty - line.picked;
   const qty = int(req.body.qty);
   if (!(qty >= 1) || qty > remaining) fail(400, `Short quantity must be between 1 and ${remaining}`);

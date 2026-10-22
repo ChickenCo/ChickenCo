@@ -1,10 +1,11 @@
 // Admin: employee logins (username + PIN, no email).
 import { api } from '../api.js';
-import { esc, toast, ask, ROLE_LABEL } from '../ui.js';
+import { esc, toast, ask, ROLE_LABEL, fmtTime } from '../ui.js';
 
 const view = document.getElementById('view');
 
 const ROLE_HELP = {
+  driver: 'Sees orders and leaves loading notes; does not pick',
   picker: 'Picks orders and marks items out',
   supervisor: 'Also checks outs, approves orders, assigns orders',
   management: 'Also enters orders, manages items, sees reports',
@@ -23,8 +24,17 @@ export async function usersView(ctx) {
   ctx.chrome('Employees', '#/');
   let users = [];
   const render = async () => {
-    users = await api.get('/users');
+    const [list, requests] = await Promise.all([api.get('/users'), api.get('/pin-requests')]);
+    users = list;
     view.innerHTML = `
+      ${requests.map((r) => `
+        <div class="banner warn row">
+          <span><b>${esc(r.name)}</b> (${esc(r.username)}) forgot their PIN · ${fmtTime(r.created_at)}</span>
+          <span class="btn-group">
+            <button class="btn btn-small btn-primary" data-act="edit" data-arg="${r.user_id}">Set new PIN</button>
+            <button class="btn btn-small btn-ghost" data-act="dismiss" data-arg="${r.id}">Dismiss</button>
+          </span>
+        </div>`).join('')}
       <div class="toolbar"><button class="btn btn-primary" data-act="add">+ Add employee</button></div>
       <ul class="lines">${users.map((u) => `
         <li class="line ${u.active ? '' : 'inactive'}" data-act="edit" data-arg="${u.id}">
@@ -78,6 +88,7 @@ export async function usersView(ctx) {
     }
   };
 
+  ctx.actions.dismiss = async (id) => { await api.post(`/pin-requests/${id}/dismiss`); render(); };
   ctx.actions.edit = async (id) => {
     const u = users.find((x) => String(x.id) === id);
     const ok = await ask({

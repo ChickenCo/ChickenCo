@@ -1,6 +1,7 @@
 // Home: the Trucks menu, and the list of orders on one truck.
 import { api, qs } from '../api.js';
-import { esc, statusPill, COMPANY, fmtTime, fmtNum, rateHtml } from '../ui.js';
+import { esc, toast, statusPill, COMPANY, fmtTime, fmtNum, rateHtml } from '../ui.js';
+import { notesHtml, addNote, deleteNote } from '../notes.js';
 
 const view = document.getElementById('view');
 
@@ -86,14 +87,18 @@ export function dayLists(day) {
 export async function truckView(ctx, truck) {
   const known = ctx.trucks.find((t) => String(t.truck) === truck);
   ctx.chrome(known ? `Truck ${truck}` : 'Unknown load #', '#/');
+  let loadOrder = false;
   const render = async () => {
-    const orders = await api.get(`/orders${qs({ truck, active: 1 })}`);
-    const card = (o) => {
+    const [orders, notes] = await Promise.all([
+      api.get(`/orders${qs({ truck, active: 1 })}`),
+      known ? api.get(`/trucks/${truck}/notes`) : [],
+    ]);
+    const card = (o, seq) => {
       const done = o.units_picked + o.units_out;
       return `
         <a class="card order-card status-${o.status}" href="#/${o.status === 'review' && ctx.can('supervisor') ? 'review' : 'order'}/${o.id}">
           <div class="row">
-            <span class="stop">Stop ${esc(o.stop || '—')}</span>
+            <span class="stop">${seq ? `<span class="load-seq">${seq}</span>` : ''}Stop ${esc(o.stop || '—')}</span>
             ${statusPill(o.status)}
           </div>
           <strong class="store">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</strong>
@@ -105,12 +110,39 @@ export async function truckView(ctx, truck) {
           </div>
         </a>`;
     };
-    const active = orders.filter((o) => o.status !== 'done');
-    const done = orders.filter((o) => o.status === 'done');
+    const byStop = (a, b) => (parseInt(a.stop, 10) || 0) - (parseInt(b.stop, 10) || 0) || String(a.stop).localeCompare(String(b.stop));
+    let body;
+    if (loadOrder) {
+      // The last stop goes on the truck first.
+      const seq = [...orders].sort(byStop).reverse();
+      body = `<p class="muted small">Load in this order: the last stop goes on first, so the first stop comes off first.</p>
+        ${seq.map((o, i) => card(o, i + 1)).join('') || '<div class="empty muted">No orders on this truck.</div>'}`;
+    } else {
+      const active = orders.filter((o) => o.status !== 'done');
+      const done = orders.filter((o) => o.status === 'done');
+      body = `${active.map((o) => card(o)).join('') || '<div class="empty muted">No orders waiting on this truck.</div>'}
+        ${done.length ? `<h2 class="section-title">Finished (${done.length})</h2>${done.map((o) => card(o)).join('')}` : ''}`;
+    }
+    const openCount = orders.filter((o) => o.status === 'open').length;
     view.innerHTML = `
       ${known ? `<p class="muted small">Load #${esc(known.load)} · ${orders.length} order${orders.length === 1 ? '' : 's'}</p>` : ''}
-      ${active.map(card).join('') || '<div class="empty muted">No orders waiting on this truck.</div>'}
-      ${done.length ? `<h2 class="section-title">Finished (${done.length})</h2>${done.map(card).join('')}` : ''}`;
+      ${known ? notesHtml(notes, ctx, { title: 'Loading notes' }) : ''}
+      <nav class="tabs">
+        <a href="#" data-act="mode" data-arg="pick" class="${loadOrder ? '' : 'active'}">Pick order</a>
+        <a href="#" data-act="mode" data-arg="load" class="${loadOrder ? 'active' : ''}">Load order</a>
+      </nav>
+      ${body}
+      ${ctx.can('picker') && known && openCount ? `<div class="bottom-bar"><button class="btn btn-primary btn-scan" data-act="next">Start next order (${openCount} waiting)</button></div>` : ''}`;
+  };
+  ctx.actions.mode = (m) => { loadOrder = m === 'load'; render(); };
+  ctx.actions.addNote = async () => { if (await addNote({ truck: Number(truck) })) render(); };
+  ctx.actions.delNote = async (id) => { if (await deleteNote(id)) render(); };
+  ctx.actions.next = async () => {
+    try {
+      const o = await api.post(`/trucks/${truck}/next`);
+      toast(`Stop ${o.stop}: ${o.store}`, 'ok');
+      location.hash = `#/order/${o.id}`;
+    } catch (err) { toast(err.message, 'error'); render(); }
   };
   ctx.refresh = render;
   await render();

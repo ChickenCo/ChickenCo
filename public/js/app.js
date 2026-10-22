@@ -11,6 +11,8 @@ import { usersView } from './views/users.js';
 import { reportsView } from './views/reports.js';
 import { settingsView, accountView } from './views/settings.js';
 import { ratesView } from './views/rates.js';
+import { floorView } from './views/floor.js';
+import { importView } from './views/imports.js';
 
 const view = document.getElementById('view');
 const topbar = document.getElementById('topbar');
@@ -18,7 +20,7 @@ const titleEl = document.getElementById('title');
 const backBtn = document.getElementById('backBtn');
 const menuDot = document.getElementById('menuDot');
 
-const RANK = { picker: 0, supervisor: 1, management: 2, admin: 3 };
+const RANK = { driver: 0, picker: 1, supervisor: 2, management: 3, admin: 4 };
 
 // Shared state handed to every view.
 const ctx = {
@@ -40,6 +42,7 @@ const ctx = {
     const me = await api.get('/me');
     Object.assign(ctx, { user: me.user, trucks: me.trucks, vapidKey: me.vapidKey, server: me });
     lastVersion = me.version;
+    loadedApp = loadedApp || me.appVersion;
   },
 };
 
@@ -58,6 +61,8 @@ const routes = [
   [/^review$/, reviewListView, 'supervisor'],
   [/^review\/(\d+)$/, reviewView, 'supervisor'],
   [/^orders$/, ordersView, 'management'],
+  [/^import$/, importView, 'management'],
+  [/^floor$/, floorView, 'supervisor'],
   [/^orders\/new$/, orderEditView, 'management'],
   [/^orders\/(\d+)\/edit$/, orderEditView, 'management'],
   [/^items$/, itemsView, 'management'],
@@ -98,13 +103,15 @@ document.getElementById('menuBtn').onclick = async () => {
   const badge = (n) => (n ? ` <span class="badge">${n}</span>` : '');
   const items = [
     { key: '#/', label: 'Trucks' },
+    ctx.can('supervisor') && { key: '#/floor', label: 'Floor (who is picking)' },
     ctx.can('supervisor') && { key: '#/review', html: `Outs to review${badge(ctx.counts.review)}` },
     ctx.can('supervisor') && { key: '#/barcodes', html: `Barcodes to check${badge(ctx.counts.pendingBarcodes)}` },
     ctx.can('supervisor') && { key: '#/rates', label: 'Pick rates' },
     ctx.can('management') && { key: '#/orders', label: 'Manage orders' },
+    ctx.can('management') && { key: '#/import', label: 'Import from VIP' },
     ctx.can('management') && { key: '#/items', label: 'Items & barcodes' },
     ctx.can('management') && { key: '#/reports', label: 'Reports' },
-    ctx.can('admin') && { key: '#/users', label: 'Employees' },
+    ctx.can('admin') && { key: '#/users', html: `Employees${badge(ctx.counts.pinRequests)}` },
     ctx.can('admin') && { key: '#/settings', label: 'Settings' },
     { key: '#/account', label: 'My account' },
     { key: 'logout', label: 'Sign out', danger: true },
@@ -136,13 +143,22 @@ function showLogin(message = '') {
       <label>PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="current-password" required></label>
       <p class="form-error" ${message ? '' : 'hidden'}>${esc(message)}</p>
       <button class="btn btn-primary btn-block">Sign in</button>
-      <p class="muted small center">No account? Ask your administrator.</p>
+      <p class="muted small center"><button type="button" class="link-btn" id="forgotPin">Forgot your PIN?</button> · No account? Ask your administrator.</p>
       <p class="muted small center poc-note">${COMPANY} · Proof of concept, not for production use yet.</p>
     </form>`;
   const form = document.getElementById('loginForm');
   const err = form.querySelector('.form-error');
   form.elements.username.value = localStorage.getItem('lastUsername') || '';
   (form.elements.username.value ? form.elements.pin : form.elements.username).focus();
+  document.getElementById('forgotPin').onclick = async () => {
+    const username = form.elements.username.value.trim();
+    if (!username) { err.textContent = 'Type your username first, then tap "Forgot your PIN?"'; err.hidden = false; return; }
+    try {
+      const r = await api.post('/pin-request', { username });
+      err.hidden = true;
+      toast(r.message, 'ok');
+    } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+  };
   form.onsubmit = async (e) => {
     e.preventDefault();
     err.hidden = true;
@@ -160,12 +176,29 @@ function showLogin(message = '') {
 
 // ---------- live updates ----------
 let lastVersion = 0;
+let loadedApp = null;
+
+// A new version was deployed: offer a one-tap refresh instead of leaving phones on old code.
+function showUpdate() {
+  if (document.getElementById('updateBar')) return;
+  const bar = document.createElement('button');
+  bar.id = 'updateBar';
+  bar.className = 'update-bar';
+  bar.textContent = 'A new version of the app is ready. Tap to update.';
+  bar.onclick = async () => {
+    bar.textContent = 'Updating…';
+    try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update(); } catch { /* reload anyway */ }
+    location.reload();
+  };
+  document.body.appendChild(bar);
+}
 async function poll() {
   if (!ctx.user || document.hidden) return;
   try {
     const p = await api.get('/ping');
-    ctx.counts = { review: p.review, pendingBarcodes: p.pendingBarcodes };
-    menuDot.hidden = !(p.review || p.pendingBarcodes);
+    ctx.counts = { review: p.review, pendingBarcodes: p.pendingBarcodes, pinRequests: p.pinRequests };
+    menuDot.hidden = !(p.review || p.pendingBarcodes || p.pinRequests);
+    if (loadedApp && p.appVersion && p.appVersion !== loadedApp) showUpdate();
     const busy = modalOpen() || Scanner.isOpen() || document.activeElement?.matches('input, textarea, select');
     if (p.version !== lastVersion && ctx.refresh && !busy) {
       lastVersion = p.version;

@@ -9,7 +9,7 @@ export async function ordersView(ctx) {
   ctx.chrome('Manage orders', '#/');
   const state = { status: '', truck: '', q: '' };
   view.innerHTML = `
-    <div class="toolbar"><a class="btn btn-primary" href="#/orders/new">+ New order</a></div>
+    <div class="toolbar"><a class="btn btn-primary" href="#/import">Import from VIP</a><a class="btn btn-ghost" href="#/orders/new">+ Type an order</a></div>
     <div class="filters">
       <select id="fTruck"><option value="">All trucks</option>${ctx.trucks.map((t) => `<option value="${t.truck}">Truck ${t.truck}</option>`).join('')}</select>
       <select id="fStatus"><option value="">Any status</option><option value="open">Not started</option><option value="picking">Picking</option><option value="review">Needs review</option><option value="done">Done</option></select>

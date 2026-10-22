@@ -14,7 +14,7 @@ export async function reportsView(ctx) {
   let rows = [];
 
   view.innerHTML = `
-    <nav class="tabs"><a href="#" data-act="tab" data-arg="outs" class="active">Outs</a><a href="#" data-act="tab" data-arg="orders">Finished orders</a><a href="#" data-act="tab" data-arg="days">Days</a></nav>
+    <nav class="tabs"><a href="#" data-act="tab" data-arg="outs" class="active">Outs</a><a href="#" data-act="tab" data-arg="orders">Finished orders</a><a href="#" data-act="tab" data-arg="days">Days</a><a href="#" data-act="tab" data-arg="trends">Out trends</a></nav>
     <div class="filters">
       <label>From<input type="date" id="rFrom" value="${day(weekAgo)}"></label>
       <label>To<input type="date" id="rTo" value="${day(today)}"></label>
@@ -30,6 +30,19 @@ export async function reportsView(ctx) {
 
   async function render() {
     view.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.arg === tab));
+    if (tab === 'trends') {
+      rows = await api.get(`/reports/out-trends${qs(range())}`);
+      out.innerHTML = `
+        <p class="muted small">Items that ran out most in this period, for purchasing. "Can't find" counts point to warehouse problems rather than stock.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Item</th><th>Cases out</th><th>Times</th><th>Days</th><th>Stores</th><th>On VIP sheet</th><th>Can't find</th><th>Last out</th></tr></thead>
+          <tbody>${rows.map((r) => `<tr>
+            <td>#${esc(r.code)} ${esc(r.description)}</td><td class="num"><b>${fmtNum(r.cases)}</b></td><td class="num">${r.times}</td>
+            <td class="num">${r.days}</td><td class="num">${r.stores}</td><td class="num">${r.vip_cases || ''}</td><td class="num">${r.cant_find || ''}</td>
+            <td>${fmtTime(r.last_at)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No outs in this period.</td></tr>'}</tbody>
+        </table></div>`;
+      return;
+    }
     if (tab === 'days') {
       const { from, to } = range();
       rows = (await api.get('/days')).filter((d) => d.started_at <= to && (d.ended_at ?? Date.now()) >= from);
@@ -94,6 +107,13 @@ export async function reportsView(ctx) {
     }
   };
   ctx.actions.csv = () => {
+    if (tab === 'trends') {
+      downloadCsv('out-trends.csv', [
+        ['Code', 'Description', 'Cases out', 'Times out', 'Days', 'Stores', 'Cases out on VIP sheet', "Can't find", 'Last out'],
+        ...rows.map((r) => [r.code, r.description, r.cases, r.times, r.days, r.stores, r.vip_cases, r.cant_find, new Date(r.last_at).toLocaleString()]),
+      ]);
+      return;
+    }
     if (tab === 'days') {
       downloadCsv('days.csv', [
         ['Started', 'All trucks loaded', 'Orders', 'Cases', 'Picked', 'Out', 'Top seller', 'Top seller cases'],
