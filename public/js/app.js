@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { esc, toast, choose, closeModal, modalOpen, ROLE_LABEL, COMPANY } from './ui.js';
 import * as Scanner from './scanner.js';
+import * as Wedge from './wedge.js';
 import { trucksView, truckView } from './views/trucks.js';
 import { pickView } from './views/pick.js';
 import { reviewListView, reviewView } from './views/review.js';
@@ -79,6 +80,7 @@ async function route() {
   if (!ctx.user) return;
   if (Scanner.isOpen()) Scanner.close();
   closeModal();
+  Wedge.offScan();
   ctx.actions = {};
   ctx.refresh = null;
   const seq = ++routeSeq;
@@ -97,6 +99,7 @@ async function route() {
   view.focus({ preventScroll: true });
 }
 window.addEventListener('hashchange', route);
+document.addEventListener('wedge-blocked', () => toast('Finish the quantity popup first (tap Add or Cancel), then scan again.', 'error'));
 
 // ---------- menu ----------
 document.getElementById('menuBtn').onclick = async () => {

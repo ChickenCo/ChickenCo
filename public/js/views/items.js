@@ -1,6 +1,7 @@
 // Items (product codes) and the UPC barcodes linked to them.
 import { api, qs } from '../api.js';
 import * as Scanner from '../scanner.js';
+import * as Wedge from '../wedge.js';
 import { esc, toast, ask, confirmBox, feedback, fmtTime } from '../ui.js';
 
 const view = document.getElementById('view');
@@ -68,6 +69,7 @@ export async function itemsView(ctx) {
   async function editItem(code) {
     const it = items.find((i) => i.code === code);
     if (!it) return;
+    let stopRing = () => {};
     const result = await ask({
       title: it.description,
       okText: '',
@@ -79,16 +81,28 @@ export async function itemsView(ctx) {
           <li><span class="mono">${esc(b.display)}</span>${b.status === 'pending' ? ' <span class="pill pill-warn">unchecked</span>' : ''}
           <button type="button" class="btn btn-small btn-ghost btn-danger-text" data-rm="${esc(b.gtin)}">Remove</button></li>`).join('') || '<li class="muted">None yet. Scan the case barcode to add one.</li>'}
         </ul>
-        <button type="button" class="btn btn-primary btn-block" data-do="scan">Scan a barcode to add</button>
+        <p class="muted small">With a ring scanner, just scan the case now to add its barcode.</p>
+        <button type="button" class="btn btn-primary btn-block" data-do="scan">Scan with the camera</button>
         <button type="button" class="btn btn-ghost btn-block" data-do="type">Type a barcode</button>
         <button type="button" class="btn btn-ghost btn-block" data-do="edit">Edit code / description</button>
         <button type="button" class="btn btn-ghost btn-danger-text btn-block" data-do="delete">Delete item</button>`,
       onOpen: (form, finish) => {
         form.querySelectorAll('[data-do]').forEach((b) => { b.onclick = () => finish(b.dataset.do); });
         form.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => finish(`rm:${b.dataset.rm}`); });
+        stopRing = Wedge.onScan((code) => finish(`ring:${code}`));
       },
     });
+    stopRing();
     if (!result) return;
+    if (result.startsWith('ring:')) {
+      try {
+        const r = await link(result.slice(5), '');
+        if (r) { feedback('ok'); toast(`${r.display} added`, 'ok'); }
+      } catch (err) { feedback('error'); toast(err.message, 'error'); }
+      await load();
+      editItem(it.code);
+      return;
+    }
     try {
       if (result === 'scan') {
         Scanner.open(async (text, format) => {

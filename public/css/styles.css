@@ -331,6 +331,11 @@ tr.click:active td { background: var(--bg); }
   font: inherit; font-weight: 700; text-align: center; cursor: pointer;
 }
 
+.scan-sink { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
+.scanner-chip { font-size: .85rem; color: var(--muted); margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.dot-ok { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
+.ring-test { padding: 14px; border: 2px dashed var(--border); border-radius: 10px; margin-bottom: 10px; text-align: center; }
+.setup-steps { padding-left: 20px; display: grid; gap: 4px; }
 .app-footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 24px; }
 
 /* Tabs, tables */

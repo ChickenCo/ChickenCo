@@ -4,7 +4,8 @@ import { api, qs } from '../api.js';
 import * as Scanner from '../scanner.js';
 import { normalizeBarcode } from '../barcode.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
-import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, UNIT_SHORT, OUT_REASONS } from '../ui.js';
+import * as Wedge from '../wedge.js';
+import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, modalOpen, UNIT_SHORT, OUT_REASONS } from '../ui.js';
 
 const view = document.getElementById('view');
 
@@ -136,11 +137,23 @@ export async function pickView(ctx, id) {
         <button class="btn btn-small ${big ? 'btn-ghost' : 'btn-primary'}" data-act="bigOff">List</button>
         <button class="btn btn-small ${big ? 'btn-primary' : 'btn-ghost'}" data-act="bigOn">Big text</button></div>` : ''}
       ${big && canPick() && !ready ? '' : `<input class="search" type="search" id="lineSearch" placeholder="Find on this order: name or item #" value="${esc(search)}" autocomplete="off">`}
+      ${canPick() ? '<p class="scanner-chip" id="scannerChip"></p>' : ''}
       <div id="pickLists"></div>
       ${bar ? `<div class="bottom-bar">${bar}</div>` : ''}`;
+    renderScannerChip();
     const input = document.getElementById('lineSearch');
     if (input) input.oninput = () => { search = input.value.trim().toLowerCase(); renderLists(); };
     renderLists();
+  }
+
+  function renderScannerChip() {
+    const chip = document.getElementById('scannerChip');
+    if (!chip) return;
+    let seen = 0;
+    try { seen = Number(localStorage.getItem('wedge-seen')) || 0; } catch { /* ignore */ }
+    chip.innerHTML = Date.now() - seen < 12 * 3600000
+      ? '<span class="dot-ok"></span> Ring scanner ready. Just scan; no need to tap anything.'
+      : 'Using a ring scanner? Just scan. No need to tap Scan.';
   }
 
   function renderLists() {
@@ -282,7 +295,9 @@ export async function pickView(ctx, id) {
   }
 
   // Shared by the camera and "Type code".
-  async function handleBarcode(raw, format, fromCamera) {
+  // source: 'camera', 'ring' (Bluetooth scanner) or 'typed'.
+  async function handleBarcode(raw, format, source) {
+    const fromCamera = source === 'camera';
     const say = (msg, kind) => (fromCamera ? Scanner.setStatus(msg, kind) : toast(msg, kind === 'error' ? 'error' : 'ok'));
     let found;
     try { found = await lookup(raw, format); } catch (err) { say(err.message, 'error'); return; }
@@ -311,7 +326,7 @@ export async function pickView(ctx, id) {
     const n = await pickQty(line);
     if (!n) { say('Line up the barcode inside the box'); return; }
     try {
-      await send('pick', line, { picked: line.picked + n, via: fromCamera ? 'scan' : 'typed' }, `+${n} ${line.description}`);
+      await send('pick', line, { picked: line.picked + n, via: source === 'typed' ? 'typed' : 'scan' }, `+${n} ${line.description}`);
       const fresh = lineById(line.id);
       say(`✓ ${fresh.description}: ${fresh.picked}/${fresh.qty}${queue.length ? ' (saved on phone)' : ''}`, 'ok');
       if (!todoLines().length) {
@@ -346,7 +361,7 @@ export async function pickView(ctx, id) {
              <p class="muted small">Use the item # from the sheet (like 00439) or the numbers under the barcode.</p>`,
       onOk: (f) => { const v = f.elements.code.value.trim(); if (!v) throw new Error('Enter a code'); return v; },
     });
-    if (code) await handleBarcode(code, '', fromCamera);
+    if (code) await handleBarcode(code, '', fromCamera ? 'camera' : 'typed');
   }
 
   async function markOut(line) {
@@ -406,7 +421,22 @@ export async function pickView(ctx, id) {
   ctx.actions.start = async () => {
     try { update(await api.post(`/orders/${o.id}/start`)); toast('Order is yours. Start scanning.', 'ok'); } catch (err) { toast(err.message, 'error'); }
   };
-  ctx.actions.scan = () => Scanner.open((text, format) => handleBarcode(text, format, true), () => typeCode(true));
+  ctx.actions.scan = () => Scanner.open((text, format) => handleBarcode(text, format, 'camera'), () => typeCode(true));
+
+  // Ring scanner: a scan anywhere on this screen goes straight to the item.
+  let busy = false;
+  Wedge.onScan(async (code) => {
+    try { localStorage.setItem('wedge-seen', String(Date.now())); } catch { /* ignore */ }
+    if (Scanner.isOpen()) return;
+    if (modalOpen() || busy) { feedback('error'); toast('Finish the open popup first, then scan again.', 'error'); return; }
+    if (!canPick()) {
+      feedback('error');
+      toast(o.status === 'open' && ctx.can('picker') ? 'Tap "Start picking" first, then scan.' : "You can't pick this order right now.", 'error');
+      return;
+    }
+    busy = true;
+    try { await handleBarcode(code, '', 'ring'); } finally { busy = false; renderScannerChip(); }
+  });
   ctx.actions.type = () => typeCode(false);
   ctx.actions.more = async () => {
     const pick = await choose('Order options', [

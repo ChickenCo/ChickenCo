@@ -55,6 +55,16 @@ notification. The next order entered starts a new day.
    truck (the lowest stop nobody has started). **Start next order** on a truck screen
    does the same.
 
+**Ring scanner (SA1200 or any Bluetooth scanner in keyboard mode).** Once the order is
+started, just pull the trigger. No need to tap Scan. The app tells the scanner's very
+fast typing apart from a person typing, and handles the scan like a camera scan: an
+item needed once is checked off, larger quantities open the quantity popup, and wrong
+items beep. If the quantity popup is open, a scan is ignored with a reminder to tap
+Add or Cancel first, so a barcode can't end up as a quantity. With an item open
+under Items & barcodes, a ring scan links that barcode to the item.
+Set up and test the scanner under **My account › Ring scanner**: pair it with the
+iPhone in Bluetooth keyboard (HID) mode, with Enter after each scan.
+
 Also on the pick screen:
 - **No signal?** Keep picking. Changes are saved on the phone ("No signal. 3 changes
   are saved…") and sent automatically when it reconnects, with the time they
@@ -221,8 +231,6 @@ When Safari asks for camera access, tap **Allow**.
   product list import with UPCs.
 - **Kegs and MISC lines.** These can be entered and checked off by hand, but have
   no special handling yet.
-- **Handheld scanners.** Bluetooth scanners that act as a keyboard will work in
-  the "Type code" box. A dedicated scan-gun mode can come later.
 
 ## Project layout
 
@@ -240,6 +248,7 @@ server/            Node.js + Express API, SQLite via node:sqlite
   vip.js           reads VIP pick lists (IN005 text, CSV)
   backup.js        nightly backups, local and S3-compatible
   version.js       app version, for "new version available"
+public/js/wedge.js tells ring-scanner input apart from typing
   demo.js          sample data and the Chuck's Carry Out test run
 test/              automated tests (npm test)
 public/            the phone app (plain JavaScript modules, no build step)

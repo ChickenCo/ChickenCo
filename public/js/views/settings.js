@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { esc, toast, ask, confirmBox, fmtTime, ROLE_LABEL } from '../ui.js';
 import { upcSvg } from '../upc.js';
 import { myRateHtml } from './rates.js';
+import * as Wedge from '../wedge.js';
 
 const view = document.getElementById('view');
 
@@ -137,6 +138,22 @@ export async function accountView(ctx) {
         <button class="btn btn-ghost" data-act="pin">Change my PIN</button>
       </section>
       ${rate}
+      ${ctx.can('picker') ? `<section class="card" id="ringBox">
+        <h2>Ring scanner</h2>
+        <div class="ring-test" id="ringResult"><span class="muted">Pull the trigger on any barcode to test.</span></div>
+        <label class="radio"><input type="checkbox" id="sinkToggle" ${Wedge.sinkMode() ? 'checked' : ''}> Use a hidden scan box (turn on only if test scans don't show up)</label>
+        <details><summary class="small"><b>Setting up a ring scanner (SA1200 or similar)</b></summary>
+          <ol class="small setup-steps">
+            <li>Charge it and turn it on.</li>
+            <li>Put it in <b>Bluetooth keyboard (HID)</b> mode using the setup barcode in its manual. It doesn't need Wi-Fi.</li>
+            <li>On the iPhone: <b>Settings › Bluetooth</b>, then tap the scanner to pair it.</li>
+            <li>Make sure it sends <b>Enter</b> after each scan. This is usually the default; if not, scan the "Enter / CR suffix" setup barcode in the manual.</li>
+            <li>UPC-A, EAN-13 and ITF-14 should be turned on (the usual default).</li>
+            <li>Come back here and scan a case. The code should appear in the box above.</li>
+          </ol>
+          <p class="small muted">While a Bluetooth scanner is connected, the iPhone may hide its on-screen keyboard. That's normal for keyboards. Most ring scanners can bring it back by double-pressing the trigger; see "iOS keyboard" in the manual.</p>
+        </details>
+      </section>` : ''}
       <section class="card">
         <h2>Notifications</h2>
         <p class="muted small">${why}</p>
@@ -185,4 +202,12 @@ export async function accountView(ctx) {
   };
 
   await render();
+  // Live scanner test: show each code the ring scanner sends, and how fast it arrived.
+  const stop = Wedge.watch((code) => {
+    const box = document.getElementById('ringResult');
+    if (!box) { stop(); return; }
+    try { localStorage.setItem('wedge-seen', String(Date.now())); } catch { /* ignore */ }
+    box.innerHTML = `<span class="text-ok"><b>✓ Scanner works.</b></span> Read <b class="mono">${esc(code)}</b> at ${new Date().toLocaleTimeString()}`;
+  });
+  view.addEventListener('change', (e) => { if (e.target.id === 'sinkToggle') Wedge.setSinkMode(e.target.checked); });
 }
