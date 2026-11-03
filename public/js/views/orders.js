@@ -11,7 +11,8 @@ export async function ordersView(ctx) {
   const state = { status: '', truck: '', q: '' };
   view.innerHTML = `
     <div class="toolbar"><a class="btn btn-primary" href="#/import">Import from VIP</a><a class="btn btn-ghost" href="#/orders/new">+ Type an order</a>
-      <button class="btn btn-ghost btn-danger-text" data-act="clearTests">Delete test orders</button></div>
+      <button class="btn btn-ghost btn-danger-text" data-act="clearTests">Delete test orders</button>
+      <button class="btn btn-ghost btn-danger-text" data-act="clearTrucks">Remove orders from trucks</button></div>
     <div class="filters">
       <select id="fTruck"><option value="">All trucks</option>${ctx.trucks.map((t) => `<option value="${t.truck}">Truck ${t.truck}</option>`).join('')}</select>
       <select id="fStatus"><option value="">Any status</option><option value="open">Not started</option><option value="picking">Picking</option><option value="review">Needs review</option><option value="done">Done</option></select>
@@ -35,6 +36,13 @@ export async function ordersView(ctx) {
   let t;
   document.getElementById('fQ').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value.trim(); render(); }, 250); };
 
+  ctx.actions.clearTrucks = async () => {
+    const pick = await choose('Remove orders from which trucks?', [
+      { key: 'all', label: 'All trucks', danger: true },
+      ...ctx.trucks.map((t) => ({ key: String(t.truck), label: `Truck ${t.truck}` })),
+    ], "Removes the orders on today's trucks (the ones shown on the Trucks screen).");
+    if (pick && await removeTruckOrders(pick)) render();
+  };
   ctx.actions.clearTests = async () => {
     if (!await confirmBox('Delete test orders?', 'Every order marked TEST (test runs and demo data) and its picking history will be deleted. Real orders are not touched.', 'Delete test orders', true)) return;
     try { const r = await api.del('/admin/test-orders'); toast(`${r.removed} test order${r.removed === 1 ? '' : 's'} deleted`, 'ok'); render(); } catch (err) { toast(err.message, 'error'); }
@@ -71,6 +79,31 @@ export async function ordersView(ctx) {
 
   ctx.refresh = render;
   await render();
+}
+
+// Confirm, then remove all orders on one truck (or all trucks). Returns true if anything was removed.
+export async function removeTruckOrders(truck) {
+  const which = truck === 'all' ? 'all trucks' : `Truck ${truck}`;
+  const count = await api.get(`/trucks/${truck}/orders/count`);
+  if (!count.orders) { toast(`No orders on ${which}`); return false; }
+  const ok = await ask({
+    title: `Remove all orders on ${which}?`,
+    okText: 'Remove orders',
+    danger: true,
+    body: `<p><b>${count.orders} order${count.orders === 1 ? '' : 's'} · ${count.cases.toLocaleString()} cases</b> will be removed from ${esc(which)}, with their picking progress, outs and notes.</p>
+      <p class="muted small">A backup is saved first. To confirm, type <b>REMOVE</b>.</p>
+      <label>Type REMOVE<input name="confirm" autocomplete="off" autocapitalize="characters"></label>`,
+    onOk: (f) => {
+      if (f.elements.confirm.value.trim().toUpperCase() !== 'REMOVE') throw new Error('Type REMOVE to confirm');
+      return true;
+    },
+  });
+  if (!ok) return false;
+  try {
+    const r = await api.del(`/trucks/${truck}/orders`);
+    toast(`${r.removed} order${r.removed === 1 ? '' : 's'} removed from ${which}`, 'ok');
+    return true;
+  } catch (err) { toast(err.message, 'error'); return false; }
 }
 
 export async function assignPicker(o) {

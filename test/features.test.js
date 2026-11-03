@@ -187,3 +187,20 @@ test('supervisors can renumber a stop or make it a cart; carts come after the nu
   assert.equal(s.data.is_cart, 0, 'turning cart off brings the stop number back');
   assert.equal(s.data.stop, '003');
 });
+
+test('management can remove all orders on one truck or all trucks; a backup is saved first', async () => {
+  const start = await admin.get('/trucks/6/orders/count');
+  await order(6, '001', 'REMOVE ME 1', [{ code: '00735', qty: 3 }]);
+  await order(6, '002', 'REMOVE ME 2', [{ code: '00735', qty: 2 }]);
+  const before = (await admin.get('/orders?active=1')).length;
+  assert.equal((await boss.call('DELETE', '/trucks/6/orders')).status, 403, 'supervisors cannot');
+  assert.deepEqual(await admin.get('/trucks/6/orders/count'), { orders: start.orders + 2, cases: start.cases + 5 });
+  const r = await admin.del('/trucks/6/orders');
+  assert.equal(r.removed, start.orders + 2);
+  assert.equal((await admin.get('/orders?truck=6&active=1')).length, 0);
+  assert.equal((await admin.get('/orders?active=1')).length, before - start.orders - 2, 'other trucks are untouched');
+  assert.ok((await admin.get('/admin/backups')).reason === 'before removing orders');
+  const all = await admin.del('/trucks/all/orders');
+  assert.ok(all.removed > 0);
+  assert.equal((await admin.get('/orders?active=1')).length, 0);
+});

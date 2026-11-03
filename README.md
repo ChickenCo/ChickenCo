@@ -130,6 +130,9 @@ Also on the pick screen:
   - **Test run:** tick *Test run* before importing to try a day's orders without
     affecting anything. They're marked TEST and left out of pick rates. Manage orders ›
     **Delete test orders** removes them all, and the real import still works afterwards.
+- **Remove orders from trucks:** in Manage orders (one truck or all trucks), or **Remove all
+  orders on this truck** on a truck's screen. It shows how many orders and cases will go,
+  asks you to type REMOVE, and saves a backup first.
 - **Manage orders:** type orders in by hand when needed, and edit, assign, reopen
   or delete them. Each order also has a history of every scan and change.
 - **Items & barcodes:** add items, scan a case barcode to link it to an item,

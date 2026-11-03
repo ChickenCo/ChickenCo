@@ -2,6 +2,7 @@
 import { api, qs } from '../api.js';
 import { esc, toast, statusPill, COMPANY, fmtTime, fmtNum, rateHtml, stopLabel } from '../ui.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
+import { removeTruckOrders } from './orders.js';
 
 const view = document.getElementById('view');
 
@@ -129,6 +130,7 @@ export async function truckView(ctx, truck) {
     view.innerHTML = `
       ${known ? `<p class="muted small">${[...new Set(orders.map((o) => o.load_no))].length ? `Load #${[...new Set(orders.map((o) => o.load_no))].map(esc).join(', ')} · ` : ''}${orders.length} order${orders.length === 1 ? '' : 's'} · <b>${fmtNum(orders.reduce((n, o) => n + o.units, 0))} cases</b></p>` : ''}
       ${known ? notesHtml(notes, ctx, { title: 'Loading notes' }) : ''}
+      ${known && ctx.can('management') && orders.length ? '<div class="toolbar"><button class="btn btn-small btn-ghost btn-danger-text" data-act="clearTruck">Remove all orders on this truck</button></div>' : ''}
       <nav class="tabs">
         <a href="#" data-act="mode" data-arg="pick" class="${loadOrder ? '' : 'active'}">Pick order</a>
         <a href="#" data-act="mode" data-arg="load" class="${loadOrder ? 'active' : ''}">Load order</a>
@@ -139,6 +141,7 @@ export async function truckView(ctx, truck) {
   ctx.actions.mode = (m) => { loadOrder = m === 'load'; render(); };
   ctx.actions.addNote = async () => { if (await addNote({ truck: Number(truck) })) render(); };
   ctx.actions.delNote = async (id) => { if (await deleteNote(id)) render(); };
+  ctx.actions.clearTruck = async () => { if (await removeTruckOrders(truck)) render(); };
   ctx.actions.next = async () => {
     try {
       const o = await api.post(`/trucks/${truck}/next`);

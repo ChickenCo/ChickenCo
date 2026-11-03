@@ -1042,6 +1042,39 @@ api.post('/admin/demo', requireRole('admin'), h(() => {
   return result;
 }));
 
+// Remove every order on the trucks (or one truck) for the day shown on the Trucks screen.
+// A backup is saved first, so a mistake can be undone by restoring it.
+function truckOrderIds(truck) {
+  const day = days.displayDay();
+  if (!day) return { day: null, ids: [] };
+  const orders = all('SELECT id, load_no FROM orders WHERE day_id = ?', day.id);
+  const ids = orders.filter((o) => truck === 'all' || truckForLoad(o.load_no) === int(truck)).map((o) => o.id);
+  return { day, ids };
+}
+
+api.get('/trucks/:truck/orders/count', requireRole('management'), h((req) => {
+  const { ids } = truckOrderIds(req.params.truck);
+  const cases = ids.length ? one(`SELECT COALESCE(SUM(qty), 0) AS n FROM order_lines WHERE order_id IN (${ids.map(() => '?').join(',')})`, ...ids).n : 0;
+  return { orders: ids.length, cases };
+}));
+
+api.delete('/trucks/:truck/orders', requireRole('management'), h(async (req) => {
+  const truck = req.params.truck;
+  if (truck !== 'all' && !trucks().some((t) => t.truck === int(truck))) fail(404, 'Unknown truck');
+  const { day, ids } = truckOrderIds(truck);
+  if (!ids.length) return { removed: 0 };
+  await backup.runBackup('before removing orders');
+  const removed = tx(() => {
+    let n = 0;
+    for (const id of ids) n += run('DELETE FROM orders WHERE id = ?', id).changes;
+    if (one('SELECT 1 FROM orders WHERE day_id = ?', day.id)) days.closeIfDone(day.id);
+    else run('DELETE FROM days WHERE id = ?', day.id);
+    return n;
+  });
+  changed();
+  return { removed };
+}));
+
 // Clear out test runs and demo data in one go (real orders are untouched).
 api.delete('/admin/test-orders', requireRole('management'), h(() => {
   const dayIds = all('SELECT DISTINCT day_id FROM orders WHERE is_test = 1').map((d) => d.day_id);
