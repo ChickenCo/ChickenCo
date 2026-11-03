@@ -14,6 +14,7 @@ import { settingsView, accountView } from './views/settings.js';
 import { ratesView } from './views/rates.js';
 import { floorView } from './views/floor.js';
 import { importView } from './views/imports.js';
+import { priorityView } from './views/priority.js';
 
 const view = document.getElementById('view');
 const topbar = document.getElementById('topbar');
@@ -41,7 +42,7 @@ const ctx = {
   truckName: (n) => (n ? `Truck ${n}` : 'Unknown truck'),
   async reloadMe() {
     const me = await api.get('/me');
-    Object.assign(ctx, { user: me.user, trucks: me.trucks, warehouseDigit: me.warehouseDigit, vapidKey: me.vapidKey, server: me });
+    Object.assign(ctx, { user: me.user, trucks: me.trucks, warehouseDigit: me.warehouseDigit, pickPriority: me.pickPriority || [], vapidKey: me.vapidKey, server: me });
     lastVersion = me.version;
     loadedApp = loadedApp || me.appVersion;
   },
@@ -64,6 +65,7 @@ const routes = [
   [/^orders$/, ordersView, 'management'],
   [/^import$/, importView, 'management'],
   [/^floor$/, floorView, 'supervisor'],
+  [/^priority$/, priorityView, 'supervisor'],
   [/^orders\/new$/, orderEditView, 'management'],
   [/^orders\/(\d+)\/edit$/, orderEditView, 'management'],
   [/^items$/, itemsView, 'management'],
@@ -110,6 +112,7 @@ document.getElementById('menuBtn').onclick = async () => {
     ctx.can('supervisor') && { key: '#/review', html: `Outs to review${badge(ctx.counts.review)}` },
     ctx.can('supervisor') && { key: '#/barcodes', html: `Barcodes to check${badge(ctx.counts.pendingBarcodes)}` },
     ctx.can('supervisor') && { key: '#/rates', label: 'Pick rates' },
+    ctx.can('supervisor') && { key: '#/priority', label: 'Pick priority (30 packs first…)' },
     ctx.can('management') && { key: '#/orders', label: 'Manage orders' },
     ctx.can('management') && { key: '#/import', label: 'Import from VIP' },
     ctx.can('management') && { key: '#/items', label: 'Items & barcodes' },

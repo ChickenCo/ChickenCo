@@ -213,3 +213,14 @@ test('barcode lookup tolerates a scanner that leaves off the check digit', async
   assert.equal((await picker.get('/barcodes/lookup?raw=01820053030')).item.code, '77001', 'UPC without the check digit');
   assert.equal((await picker.get('/barcodes/lookup?raw=018200530319')).item, null, 'a different valid UPC does not match');
 });
+
+test('supervisors set the pick priority; pickers cannot', async () => {
+  const me = await picker.get('/me');
+  assert.equal(me.pickPriority[0].label, '30 packs', 'starts with 30 packs first');
+  assert.equal((await picker.call('PUT', '/settings/priority', { rules: [] })).status, 403);
+  const r = await boss.call('PUT', '/settings/priority', { rules: [
+    { label: 'Thirties', match: '30/12, 30 PK' }, { label: '', match: ['x'] }, { label: 'Kegs', match: ['1/2 BBL', '1/4 BBL'] }] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.pickPriority, [{ label: 'Thirties', match: ['30/12', '30 PK'] }, { label: 'Kegs', match: ['1/2 BBL', '1/4 BBL'] }]);
+  assert.deepEqual((await picker.get('/me')).pickPriority.map((x) => x.label), ['Thirties', 'Kegs']);
+});

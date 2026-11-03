@@ -203,3 +203,10 @@ test('kegs are only kept for trucks due on keg days (Tuesday and Wednesday by de
   assert.match(wedOnly.warnings.at(-1), /only kegs/);
   assert.equal(wedOnly.days.find((d) => d.day_no === '2').cases, 12);
 });
+
+test('a test or demo order for the same store never blocks the real VIP import', async () => {
+  const { parseVipText } = require('../server/vip');
+  const parsed = parseImport(makeXlsx(ROWS), 'orderrecord.xlsx');
+  assert.ok(parsed.orders.every((o) => o.vip_ref), 'order-record orders carry a VIP reference');
+  assert.equal(parseVipText('').orders.length, 0);
+});

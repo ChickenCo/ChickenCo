@@ -70,6 +70,13 @@ const trucks = () => getSetting('trucks', DEFAULT_TRUCKS);
 const warehouseDigit = () => getSetting('warehouse_digit', '0');
 // Delivery weekdays (0 = Sunday) whose trucks get kegs picked; other days' keg lines are left off.
 const kegDays = () => getSetting('keg_days', [2, 3]);
+// Pick priority set by supervisors: pack types at the top of every pick list, in order.
+const DEFAULT_PRIORITY = [
+  { label: '30 packs', match: ['30/12', '30 PK', '30PK', '30 PACK'] },
+  { label: '18 packs', match: ['18/12', '18 CAN', '18 PK', '18PK'] },
+  { label: '12 packs', match: ['2/12', '12/12', '12 PK', '12PK'] },
+];
+const pickPriority = () => getSetting('pick_priority', DEFAULT_PRIORITY);
 function truckForLoad(load) {
   const s = String(load ?? '').trim();
   const t = trucks().find((x) => x.load === s);
@@ -176,6 +183,7 @@ api.get('/me', h((req) => ({
   trucks: trucks(),
   warehouseDigit: warehouseDigit(),
   kegDays: kegDays(),
+  pickPriority: pickPriority(),
   vapidKey: push.publicKey(),
   version,
   appVersion: APP_VERSION,
@@ -376,8 +384,11 @@ api.post('/orders/import/preview', requireRole('management'),
       format, warnings, skipped, days: dayGroups,
       barcodes: { ...barcodeStatus(barcodes), list: barcodes },
       orders: orders.map((o) => {
-        const dup = (o.vip_ref && one('SELECT id FROM orders WHERE vip_ref = ?', o.vip_ref))
-          || (day && !day.ended_at && one('SELECT id FROM orders WHERE day_id = ? AND load_no = ? AND stop = ? AND store = ?', day.id, o.load_no, o.stop, o.store));
+        // VIP order records carry their own reference; other formats fall back to same truck, stop and store today.
+        // Test and demo orders never count as duplicates of a real order.
+        const dup = o.vip_ref
+          ? one('SELECT id FROM orders WHERE vip_ref = ?', o.vip_ref)
+          : day && !day.ended_at && one('SELECT id FROM orders WHERE day_id = ? AND load_no = ? AND stop = ? AND store = ? AND is_test = 0', day.id, o.load_no, o.stop, o.store);
         return {
           ...o,
           truck: truckForLoad(o.load_no),
@@ -961,6 +972,16 @@ api.put('/settings/trucks', requireRole('admin'), h((req) => {
   setSetting('trucks', list.sort((a, b) => a.truck - b.truck));
   changed();
   return trucks();
+}));
+
+api.put('/settings/priority', requireRole('supervisor'), h((req) => {
+  const rules = (Array.isArray(req.body.rules) ? req.body.rules : []).slice(0, 30).map((r) => ({
+    label: str(r.label, 60),
+    match: (Array.isArray(r.match) ? r.match : String(r.match || '').split(',')).map((w) => str(w, 40)).filter(Boolean).slice(0, 20),
+  })).filter((r) => r.label && r.match.length);
+  setSetting('pick_priority', rules);
+  changed();
+  return { pickPriority: pickPriority() };
 }));
 
 api.put('/settings/kegs', requireRole('admin'), h((req) => {

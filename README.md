@@ -98,6 +98,11 @@ Also on the pick screen:
 - **Running out:** when the same item is marked out on 3 orders in one day,
   supervisors and management get a notification, and it's listed on the Floor screen.
 - Can add notes to orders, stores and trucks.
+- **Pick priority** (Menu) sets the order pack types appear on every pick list, e.g. 30 packs,
+  then 18 packs, then 12 packs. Each rule lists words to look for in the item description
+  ("30/12, 30 PK"). Move rules with ↑ ↓, and a preview shows which items each rule catches.
+  Pick lists are grouped under those headings, and anything not caught goes last in VIP
+  order. "2/12" doesn't catch "12/12" or "24/12", so list each one you want.
 - **Edit stop** (on an order, or in Manage orders) changes the stop number, or marks the
   order as a **Cart** for small orders that don't go on a pallet. A cart shows **CART**
   instead of its stop number everywhere. Carts are listed after the numbered stops, and

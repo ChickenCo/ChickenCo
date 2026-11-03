@@ -5,6 +5,7 @@ import * as Scanner from '../scanner.js';
 import { normalizeBarcode } from '../barcode.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 import * as Wedge from '../wedge.js';
+import { groupByPriority, sortByPriority, priorityOf } from '../priority.js';
 import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, modalOpen, stopLabel, UNIT_SHORT, OUT_REASONS } from '../ui.js';
 
 const view = document.getElementById('view');
@@ -95,7 +96,8 @@ export async function pickView(ctx, id) {
   const canPick = () => ctx.can('picker') && (mine() || (ctx.can('supervisor') && o.status === 'picking'));
   const remainingToPick = (l) => l.qty - l.picked;
   const lineById = (lid) => o.lines.find((l) => String(l.id) === String(lid));
-  const todoLines = () => o.lines.filter((l) => l.picked + l.out_qty < l.qty);
+  // Lines still to pick, in the supervisors' priority order (30 packs first, and so on).
+  const todoLines = () => sortByPriority(o.lines.filter((l) => l.picked + l.out_qty < l.qty), ctx.pickPriority);
   // The same item can be on an order twice: once marked *OUT by VIP and once without.
   // A scan goes to the line that still needs picking, and only to the *OUT line if that's all there is.
   const lineForCode = (code) => {
@@ -175,7 +177,7 @@ export async function pickView(ctx, id) {
       const l = todo[bigIdx];
       wrap.innerHTML = `
         <section class="card big-item ${l.out_qty ? 'out' : ''}">
-          <div class="muted">Item ${bigIdx + 1} of ${todo.length} left</div>
+          <div class="muted">Item ${bigIdx + 1} of ${todo.length} left${(() => { const p = priorityOf(l.description, ctx.pickPriority); return p < (ctx.pickPriority || []).length ? ` · <b class="group-title">${esc(ctx.pickPriority[p].label)}</b>` : ''; })()}</div>
           <div class="big-name">${esc(l.description)}</div>
           <div class="big-code">#${esc(l.code)}</div>
           <div class="big-qty"><b>${remainingToPick(l) - l.out_qty}</b> <span>${esc(UNIT_SHORT[l.unit] || '')} to pick</span></div>
@@ -196,7 +198,9 @@ export async function pickView(ctx, id) {
     const outs = o.lines.filter((l) => l.out_qty > 0 && match(l));
     const done = o.lines.filter((l) => l.picked >= l.qty && !l.out_qty && match(l));
     wrap.innerHTML = `
-      ${shownTodo.length ? `<h2 class="section-title">To pick (${shownTodo.length})</h2><ul class="lines">${shownTodo.map((l) => lineRow(l, { act })).join('')}</ul>` : ''}
+      ${shownTodo.length ? `<h2 class="section-title">To pick (${shownTodo.length})</h2>${groupByPriority(shownTodo, ctx.pickPriority).map((g, i, all) => `
+        ${all.length > 1 ? `<h3 class="group-title">${esc(g.label)} <span class="muted">(${g.lines.length})</span></h3>` : ''}
+        <ul class="lines">${g.lines.map((l) => lineRow(l, { act })).join('')}</ul>`).join('')}` : ''}
       ${outs.length ? `<h2 class="section-title">Out (${outs.length})</h2><ul class="lines">${outs.map((l) => lineRow(l, { act })).join('')}</ul>` : ''}
       ${done.length ? `<h2 class="section-title">Picked (${done.length})</h2><ul class="lines">${done.map((l) => lineRow(l, { act })).join('')}</ul>` : ''}
       ${search && !shownTodo.length && !outs.length && !done.length ? '<p class="muted center">Nothing on this order matches.</p>' : ''}

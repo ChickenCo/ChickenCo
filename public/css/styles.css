@@ -343,6 +343,10 @@ tr.click:active td { background: var(--bg); }
 .scanner-chip { font-size: .85rem; color: var(--muted); margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
 .dot-ok { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
 .ring-test { padding: 14px; border: 2px dashed var(--border); border-radius: 10px; margin-bottom: 10px; text-align: center; }
+.group-title { font-size: .8rem; font-weight: 800; color: var(--brand); text-transform: uppercase; letter-spacing: .05em; margin: 12px 0 6px 4px; }
+.prio-num { font-size: 1.4rem; color: var(--brand); }
+.prio-preview li { display: flex; flex-direction: column; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.prio-eg { overflow-wrap: anywhere; }
 .scan-log li { overflow-wrap: anywhere; }
 .setup-steps { padding-left: 20px; display: grid; gap: 4px; }
 .app-footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 24px; }
