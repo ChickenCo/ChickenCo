@@ -327,13 +327,13 @@ function saveLines(orderId, lines, userId) {
   existing.filter((e) => !keep.has(e.id)).forEach((e) => run('DELETE FROM order_lines WHERE id = ?', e.id));
 }
 
-function createOrder(body, userId, how = 'created') {
+function createOrder(body, userId, how = 'created', { isTest = false } = {}) {
   const { header, lines } = readOrderBody(body);
   return tx(() => {
-    const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at, vip_ref)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at, vip_ref, is_test)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     days.openDayId(), header.load_no, header.stop, header.store, header.account_no, header.address, header.city, header.state,
-    header.day_no, header.order_date, header.zone, userId, Date.now(), str(body.vip_ref, 80) || null);
+    header.day_no, header.order_date, header.zone, userId, Date.now(), str(body.vip_ref, 80) || null, isTest ? 1 : 0);
     const orderId = Number(r.lastInsertRowid);
     saveLines(orderId, lines, userId);
     // Delivery notes that came with the order from VIP ("cooler take to east 80").
@@ -390,14 +390,17 @@ api.post('/orders/import/preview', requireRole('management'),
 
 api.post('/orders/import', requireRole('management'), h((req) => {
   const list = Array.isArray(req.body.orders) ? req.body.orders.slice(0, 1000) : [];
+  const testRun = !!req.body.testRun;
   const created = [];
   const skipped = [];
   for (const o of list) {
-    if (o.vip_ref && one('SELECT 1 FROM orders WHERE vip_ref = ?', str(o.vip_ref, 80))) {
+    // A test run is marked TEST and kept apart from real imports, so the real orders can still come in later.
+    const ref = o.vip_ref ? `${testRun ? 'test:' : ''}${str(o.vip_ref, 80)}` : null;
+    if (ref && one('SELECT 1 FROM orders WHERE vip_ref = ?', ref)) {
       skipped.push({ store: o.store, stop: o.stop, error: 'Already imported' });
       continue;
     }
-    try { created.push(createOrder(o, req.user.id, 'imported')); } catch (err) {
+    try { created.push(createOrder({ ...o, vip_ref: ref }, req.user.id, 'imported', { isTest: testRun })); } catch (err) {
       if (!(err instanceof HttpError)) throw err;
       skipped.push({ store: o.store, stop: o.stop, error: err.message });
     }
@@ -1023,6 +1026,21 @@ api.post('/admin/demo', requireRole('admin'), h(() => {
   const result = tx(() => demo.load({ hashPin: auth.hashPin }));
   changed();
   return result;
+}));
+
+// Clear out test runs and demo data in one go (real orders are untouched).
+api.delete('/admin/test-orders', requireRole('management'), h(() => {
+  const dayIds = all('SELECT DISTINCT day_id FROM orders WHERE is_test = 1').map((d) => d.day_id);
+  const removed = tx(() => {
+    const n = run('DELETE FROM orders WHERE is_test = 1').changes;
+    for (const id of dayIds) {
+      if (one('SELECT 1 FROM orders WHERE day_id = ?', id)) days.closeIfDone(id);
+      else run('DELETE FROM days WHERE id = ?', id);
+    }
+    return n;
+  });
+  changed();
+  return { removed };
 }));
 
 api.post('/admin/test-run', requireRole('admin'), h(() => {

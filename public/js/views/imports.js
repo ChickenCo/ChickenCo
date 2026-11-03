@@ -28,6 +28,7 @@ export async function importView(ctx) {
   let picked = new Set();
   let dayFilter = null;
   let dueMissing = null;
+  let testRun = false;
 
   function renderStart(message = '') {
     view.innerHTML = `
@@ -102,10 +103,12 @@ export async function importView(ctx) {
               <ul class="plain small">${o.lines.map((l) => `<li>#${esc(l.code)} ${esc(l.description)} · ${l.qty} ${esc(UNIT_SHORT[l.unit] || l.unit)}${l.vipOut ? ' · <b class="text-danger">*OUT</b>' : ''}</li>`).join('')}</ul>
             </details>
           </section>`).join('')}`).join('')}
+      <label class="radio test-run"><input type="checkbox" id="testRun" ${testRun ? 'checked' : ''}> <span><b>Test run</b>: orders are marked TEST, left out of pick rates, and can all be deleted with one tap (Manage orders › Delete test orders)</span></label>
       <div class="bottom-bar">
         <button class="btn btn-ghost" data-act="restart">Start over</button>
         <button class="btn btn-primary btn-scan" data-act="import" ${picked.size ? '' : 'disabled'}>Import ${picked.size} order${picked.size === 1 ? '' : 's'} · ${fmtNum(selCases)} cs</button>
       </div>`;
+    document.getElementById('testRun').onchange = (e) => { testRun = e.target.checked; };
     view.querySelectorAll('input[data-i]').forEach((box) => {
       box.onchange = () => { const i = Number(box.dataset.i); if (box.checked) picked.add(i); else picked.delete(i); renderPreview(); };
     });
@@ -124,8 +127,8 @@ export async function importView(ctx) {
     btn.disabled = true;
     btn.textContent = 'Importing…';
     try {
-      const r = await api.post('/orders/import', { orders, barcodes: preview.barcodes?.list || [] });
-      toast(`${r.created} order${r.created === 1 ? '' : 's'} imported${r.barcodesAdded ? `, ${r.barcodesAdded} barcodes added` : ''}${r.skipped.length ? `, ${r.skipped.length} skipped` : ''}`, r.skipped.length ? '' : 'ok');
+      const r = await api.post('/orders/import', { orders, barcodes: preview.barcodes?.list || [], testRun });
+      toast(`${r.created} ${testRun ? 'test ' : ''}order${r.created === 1 ? '' : 's'} imported${r.barcodesAdded ? `, ${r.barcodesAdded} barcodes added` : ''}${r.skipped.length ? `, ${r.skipped.length} skipped` : ''}`, r.skipped.length ? '' : 'ok');
       if (r.skipped.length) {
         view.innerHTML = `<div class="banner warn"><b>Not imported:</b><ul class="plain">${r.skipped.map((s) => `<li>${esc(s.store || '?')} (Stop ${esc(s.stop || '?')}): ${esc(s.error)}</li>`).join('')}</ul></div>
           <a class="btn btn-primary" href="#/">Go to trucks</a>`;

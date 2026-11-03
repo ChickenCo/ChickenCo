@@ -173,6 +173,20 @@ test('management uploads the file, imports one day, and re-importing is blocked'
   assert.equal(scan.item.code, '00735', 'scanning the case finds the item from the VIP UPC');
   const trucks = await json('GET', '/trucks');
   assert.deepEqual(trucks.trucks.find((x) => x.truck === 6).loads, ['206']);
+
+  // A test run of Monday's orders: marked TEST, doesn't block the real import, deleted in one go.
+  const monday = preview.orders.filter((o) => o.day_no === '1');
+  const test1 = await json('POST', '/orders/import', { orders: monday, testRun: true });
+  assert.equal(test1.created, 1);
+  const testOrders = (await json('GET', '/orders')).filter((o) => o.is_test);
+  assert.deepEqual(testOrders.map((o) => o.store), ['MONDAY STORE']);
+  const real = await json('POST', '/orders/import', { orders: monday });
+  assert.equal(real.created, 1, 'the real import still goes in after a test run');
+  const cleared = await json('DELETE', '/admin/test-orders');
+  assert.equal(cleared.removed, 1);
+  const left = await json('GET', '/orders');
+  assert.equal(left.filter((o) => o.store === 'MONDAY STORE').length, 1);
+  assert.ok(left.every((o) => !o.is_test));
 });
 
 test('kegs are only kept for trucks due on keg days (Tuesday and Wednesday by default)', () => {

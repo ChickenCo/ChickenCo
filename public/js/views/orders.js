@@ -9,7 +9,8 @@ export async function ordersView(ctx) {
   ctx.chrome('Manage orders', '#/');
   const state = { status: '', truck: '', q: '' };
   view.innerHTML = `
-    <div class="toolbar"><a class="btn btn-primary" href="#/import">Import from VIP</a><a class="btn btn-ghost" href="#/orders/new">+ Type an order</a></div>
+    <div class="toolbar"><a class="btn btn-primary" href="#/import">Import from VIP</a><a class="btn btn-ghost" href="#/orders/new">+ Type an order</a>
+      <button class="btn btn-ghost btn-danger-text" data-act="clearTests">Delete test orders</button></div>
     <div class="filters">
       <select id="fTruck"><option value="">All trucks</option>${ctx.trucks.map((t) => `<option value="${t.truck}">Truck ${t.truck}</option>`).join('')}</select>
       <select id="fStatus"><option value="">Any status</option><option value="open">Not started</option><option value="picking">Picking</option><option value="review">Needs review</option><option value="done">Done</option></select>
@@ -22,7 +23,7 @@ export async function ordersView(ctx) {
     list.innerHTML = orders.map((o) => `
       <li class="line" data-act="open" data-arg="${o.id}">
         <span class="line-main">
-          <span class="line-name">${esc(o.store)}</span>
+          <span class="line-name">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</span>
           <span class="muted small">${esc(ctx.truckName(o.truck))} · Stop ${esc(o.stop || '—')} · ${o.line_count} lines${o.order_date ? ` · ${esc(o.order_date)}` : ''}${o.picker_name ? ` · ${esc(o.picker_name)}` : ''}</span>
         </span>
         ${statusPill(o.status)}
@@ -33,6 +34,10 @@ export async function ordersView(ctx) {
   let t;
   document.getElementById('fQ').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value.trim(); render(); }, 250); };
 
+  ctx.actions.clearTests = async () => {
+    if (!await confirmBox('Delete test orders?', 'Every order marked TEST (test runs and demo data) and its picking history will be deleted. Real orders are not touched.', 'Delete test orders', true)) return;
+    try { const r = await api.del('/admin/test-orders'); toast(`${r.removed} test order${r.removed === 1 ? '' : 's'} deleted`, 'ok'); render(); } catch (err) { toast(err.message, 'error'); }
+  };
   ctx.actions.open = async (id) => {
     const o = await api.get(`/orders/${id}`);
     const pick = await choose(`${o.store} · Stop ${o.stop || '—'}`, [
