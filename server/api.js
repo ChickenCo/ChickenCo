@@ -775,11 +775,24 @@ api.post('/orders/:id/reopen', requireRole('management'), h((req) => {
 }));
 
 // ---------- barcodes ----------
+// Check digit for a GTIN body (UPC/EAN/GTIN-14 without its last digit).
+function checkDigit(body) {
+  const sum = [...body].reverse().reduce((s, d, i) => s + Number(d) * (i % 2 === 0 ? 3 : 1), 0);
+  return String((10 - (sum % 10)) % 10);
+}
+
 function barcodeLookup(raw, format) {
   const gtin = normalizeBarcode(raw, format);
   if (!gtin) fail(400, 'Empty barcode');
-  const row = one(`SELECT b.gtin, b.status, i.code, i.description FROM item_barcodes b
-    JOIN items i ON i.code = b.code WHERE b.gtin = ?`, gtin);
+  const find = (g) => one(`SELECT b.gtin, b.status, i.code, i.description FROM item_barcodes b
+    JOIN items i ON i.code = b.code WHERE b.gtin = ?`, g);
+  let row = find(gtin);
+  // Scanners set not to send the check digit give 11 digits for a UPC-A (or 12 for an EAN-13).
+  const digits = String(raw || '').replace(/\D/g, '');
+  const hasValidCheck = digits.length > 1 && checkDigit(digits.slice(0, -1)) === digits.slice(-1);
+  if (!row && (digits.length === 11 || (!hasValidCheck && (digits.length === 12 || digits.length === 13)))) {
+    row = find(`${digits}${checkDigit(digits)}`.padStart(14, '0'));
+  }
   return { gtin, display: displayBarcode(gtin), item: row ? { code: row.code, description: row.description } : null, status: row?.status };
 }
 

@@ -163,6 +163,7 @@ export async function accountView(ctx) {
       ${ctx.can('picker') ? `<section class="card" id="ringBox">
         <h2>Ring scanner</h2>
         <div class="ring-test" id="ringResult"><span class="muted">Pull the trigger on any barcode to test.</span></div>
+        <ul class="plain small scan-log" id="ringLog"></ul>
         <label class="radio"><input type="checkbox" id="sinkToggle" ${Wedge.sinkMode() ? 'checked' : ''}> Use a hidden scan box (turn on only if test scans don't show up)</label>
         <details><summary class="small"><b>Setting up a ring scanner (SA1200 or similar)</b></summary>
           <ol class="small setup-steps">
@@ -229,7 +230,14 @@ export async function accountView(ctx) {
     const box = document.getElementById('ringResult');
     if (!box) { stop(); return; }
     try { localStorage.setItem('wedge-seen', String(Date.now())); } catch { /* ignore */ }
-    box.innerHTML = `<span class="text-ok"><b>✓ Scanner works.</b></span> Read <b class="mono">${esc(code)}</b> at ${new Date().toLocaleTimeString()}`;
+    const kind = /:\/\/|^www\./i.test(code) ? 'a QR code / web link (not a product barcode)'
+      : /^\d+$/.test(code) ? `${code.length} digits` : 'text';
+    box.innerHTML = `<span class="text-ok"><b>✓ Scanner works.</b></span> Read <b class="mono">${esc(code)}</b> (${kind})`;
+    const log = document.getElementById('ringLog');
+    if (log) {
+      log.innerHTML = Wedge.recent.map((r) => `<li><span class="mono">${esc(r.code)}</span>
+        <span class="muted">· ${new Date(r.at).toLocaleTimeString()} · ${r.ms} ms${r.slowest > 120 ? ` · <b class="text-warn">pause of ${r.slowest} ms</b>` : ''}</span></li>`).join('');
+    }
   });
   view.addEventListener('change', (e) => { if (e.target.id === 'sinkToggle') Wedge.setSinkMode(e.target.checked); });
 }

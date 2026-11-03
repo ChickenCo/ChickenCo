@@ -308,6 +308,13 @@ export async function pickView(ctx, id) {
   async function handleBarcode(raw, format, source) {
     const fromCamera = source === 'camera';
     const say = (msg, kind) => (fromCamera ? Scanner.setStatus(msg, kind) : toast(msg, kind === 'error' ? 'error' : 'ok'));
+    // Packs often carry a promo QR code too; a 2D scanner reads it as a web link or text, not a product barcode.
+    const text = String(raw).trim();
+    if (/:\/\/|^www\.|\.(com|net|org)\b/i.test(text) || (/[A-Za-z]/.test(text) && text.length > 8)) {
+      feedback('error');
+      say("That's a QR code or text (often a promo on the pack), not the product barcode. Scan the barcode with numbers under it.", 'error');
+      return;
+    }
     let found;
     try { found = await lookup(raw, format); } catch (err) { say(err.message, 'error'); return; }
 
@@ -351,7 +358,7 @@ export async function pickView(ctx, id) {
     const key = await choose('New barcode', [
       ...open.map((l) => ({ key: String(l.id), html: `<span class="choice-main">${esc(l.description)}</span><span class="muted small">#${esc(l.code)}</span>` })),
       { key: 'none', label: "It's not on this order", danger: true },
-    ], `Barcode <b>${esc(found.display)}</b> isn't linked to an item yet. Which item on this order did you scan? A supervisor will double-check it.`);
+    ], `The scanner read <b class="mono">${esc(found.display)}</b>, which isn't linked to an item yet. Boxes often have two barcodes (carton and case), so a new one can show up even for an item that scanned fine before. Which item on this order is it? It only needs linking once, and a supervisor will double-check it.`);
     if (!key || key === 'none') return null;
     const line = lineById(key);
     try {

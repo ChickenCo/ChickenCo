@@ -204,3 +204,12 @@ test('management can remove all orders on one truck or all trucks; a backup is s
   assert.ok(all.removed > 0);
   assert.equal((await admin.get('/orders?active=1')).length, 0);
 });
+
+test('barcode lookup tolerates a scanner that leaves off the check digit', async () => {
+  await admin.post('/items', { code: '77001', description: 'CHECK DIGIT TEST 30/12' });
+  await admin.post('/barcodes', { raw: '018200530302', code: '77001' });
+  assert.equal((await picker.get('/barcodes/lookup?raw=018200530302')).item.code, '77001', 'full UPC');
+  assert.equal((await picker.get('/barcodes/lookup?raw=18200530302')).item.code, '77001', 'UPC without the leading zero');
+  assert.equal((await picker.get('/barcodes/lookup?raw=01820053030')).item.code, '77001', 'UPC without the check digit');
+  assert.equal((await picker.get('/barcodes/lookup?raw=018200530319')).item, null, 'a different valid UPC does not match');
+});
