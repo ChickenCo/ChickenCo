@@ -59,6 +59,7 @@ function scanTime(req) {
 // Drivers can read orders and leave notes; picking needs the picker role or higher.
 const canPick = (user) => atLeast(user, 'picker');
 const canNote = (user) => user.role === 'driver' || atLeast(user, 'supervisor');
+const stopLabel = (o) => (o.is_cart ? 'Cart' : `Stop ${o.stop || '—'}`);
 const storeKey = (o) => String(o.account_no || o.store).trim().toUpperCase();
 
 // ---------- trucks ----------
@@ -249,7 +250,7 @@ api.get('/orders', h((req) => {
     params.push(q, q, q, q);
   }
   const sql = `${ORDER_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY CASE o.status WHEN 'done' THEN 1 ELSE 0 END, CAST(o.stop AS INTEGER), o.stop, o.id DESC LIMIT 500`;
+    ORDER BY CASE o.status WHEN 'done' THEN 1 ELSE 0 END, o.is_cart, CAST(o.stop AS INTEGER), o.stop, o.id DESC LIMIT 500`;
   const rows = all(sql, ...params).map(withTruck);
   return req.query.truck === 'none' ? rows.filter((o) => o.truck == null) : rows;
 }));
@@ -447,6 +448,19 @@ api.delete('/orders/:id', requireRole('management'), h((req) => {
   changed();
 }));
 
+// Supervisors and up can renumber a stop, or make it a cart (too small for a pallet).
+api.put('/orders/:id/stop', requireRole('supervisor'), h((req) => {
+  const order = getOrder(req.params.id);
+  const cart = req.body.cart === undefined ? !!order.is_cart : !!req.body.cart;
+  const stop = req.body.stop === undefined ? order.stop : str(req.body.stop, 20);
+  if (!cart && !stop) fail(400, 'Enter a stop number');
+  if (stop !== order.stop) logEvent(order.id, req.user.id, 'stop_changed', { from: order.stop, to: stop });
+  if (cart !== !!order.is_cart) logEvent(order.id, req.user.id, cart ? 'made_cart' : 'unmade_cart');
+  run('UPDATE orders SET stop = ?, is_cart = ? WHERE id = ?', stop, cart ? 1 : 0, order.id);
+  changed();
+  return orderDetail(order.id);
+}));
+
 api.post('/orders/:id/start', h((req) => {
   const order = getOrder(req.params.id);
   if (!canPick(req.user)) fail(403, 'Drivers can view orders and leave notes, but not pick');
@@ -482,7 +496,7 @@ api.post('/orders/:id/assign', requireRole('supervisor'), h((req) => {
   run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?",
     picker.id, Date.now(), order.id);
   logEvent(order.id, req.user.id, 'assigned', { to: picker.name, toId: picker.id });
-  push.notifyUser(picker.id, { title: 'Order assigned to you', body: `Truck ${order.truck ?? '?'} · Stop ${order.stop} · ${order.store}`, url: `/#/order/${order.id}` });
+  push.notifyUser(picker.id, { title: 'Order assigned to you', body: `Truck ${order.truck ?? '?'} · ${stopLabel(order)} · ${order.store}`, url: `/#/order/${order.id}` });
   changed();
   return orderDetail(order.id);
 }));
@@ -543,7 +557,7 @@ api.post('/orders/:id/submit', h((req) => {
     logEvent(order.id, req.user.id, 'submitted', { outs: order.lines.filter((l) => l.out_qty > 0).length });
     const outs = order.lines.filter((l) => l.out_qty > 0);
     push.notifyRole('supervisor', {
-      title: `Outs to check · Truck ${order.truck ?? '?'} Stop ${order.stop}`,
+      title: `Outs to check · Truck ${order.truck ?? '?'} ${stopLabel(order)}`,
       body: `${order.store}: ${outs.map((l) => `${l.description} (${l.out_qty})`).join(', ')}`.slice(0, 180),
       url: `/#/review/${order.id}`,
     });
@@ -581,7 +595,7 @@ api.post('/trucks/:truck/next', h((req) => {
   const loads = loadsForTruck(req.params.truck);
   const id = day && loads.length && tx(() => {
     const o = one(`SELECT id FROM orders WHERE day_id = ? AND load_no IN (${loads.map(() => '?').join(',')}) AND status = 'open'
-      ORDER BY CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, ...loads);
+      ORDER BY is_cart, CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, ...loads);
     if (!o) return null;
     run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?", req.user.id, Date.now(), o.id);
     logEvent(o.id, req.user.id, 'started');
@@ -654,7 +668,7 @@ api.get('/floor', requireRole('supervisor'), h(() => {
       return {
         userId: u.id, name: u.name, role: u.role, lastAt: lastBy.get(u.id) || null,
         rate: r?.rate ?? null, cases: r?.cases ?? 0,
-        order: current && { id: current.id, truck: current.truck, stop: current.stop, store: current.store,
+        order: current && { id: current.id, truck: current.truck, stop: current.stop, is_cart: current.is_cart, store: current.store,
           units: current.units, done: current.units_picked + current.units_out, others: holding.length - 1 },
       };
     })
@@ -728,7 +742,7 @@ api.post('/orders/:id/lines/:lineId/send-back', requireRole('supervisor'), h((re
   if (order.picker_id) {
     push.notifyUser(order.picker_id, {
       title: 'Item sent back to you',
-      body: `${line.description} for ${order.store} (Stop ${order.stop}) was found. Please pick it.`,
+      body: `${line.description} for ${order.store} (${stopLabel(order)}) was found. Please pick it.`,
       url: `/#/order/${order.id}`,
     });
   }
@@ -984,7 +998,7 @@ api.get('/days/:id', requireRole('management'), h((req) => {
 api.get('/reports/outs', requireRole('management'), h((req) => {
   const from = int(req.query.from) || 0;
   const to = int(req.query.to) || Date.now();
-  return all(`SELECT o.id AS order_id, o.load_no, o.stop, o.store, o.account_no, o.order_date, o.status, l.invoice_no, l.code, l.description, l.qty,
+  return all(`SELECT o.id AS order_id, o.load_no, o.stop, o.is_cart, o.store, o.account_no, o.order_date, o.status, l.invoice_no, l.code, l.description, l.qty,
       l.out_qty, l.out_reason, l.out_status, l.out_at, ob.name AS out_by_name, rb.name AS reviewed_by_name, l.reviewed_at
     FROM order_lines l JOIN orders o ON o.id = l.order_id
     LEFT JOIN users ob ON ob.id = l.out_by LEFT JOIN users rb ON rb.id = l.reviewed_by

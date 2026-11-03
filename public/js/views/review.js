@@ -1,7 +1,7 @@
 // Supervisor: double-check items pickers marked out, then approve the order.
 import { api } from '../api.js';
-import { esc, toast, askQty, choose, confirmBox, fmtTime, UNIT_SHORT, OUT_REASONS } from '../ui.js';
-import { orderHeader, lineRow } from './pick.js';
+import { esc, toast, askQty, choose, confirmBox, fmtTime, UNIT_SHORT, OUT_REASONS, stopLabel } from '../ui.js';
+import { orderHeader, lineRow, editStop } from './pick.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 
 const view = document.getElementById('view');
@@ -12,7 +12,7 @@ export async function reviewListView(ctx) {
     const orders = await api.get('/review');
     view.innerHTML = orders.length ? orders.map((o) => `
       <a class="card order-card status-review" href="#/review/${o.id}">
-        <div class="row"><span class="stop">${esc(ctx.truckName(o.truck))} · Stop ${esc(o.stop || '—')}</span>
+        <div class="row"><span class="stop">${esc(ctx.truckName(o.truck))} · ${esc(stopLabel(o))}</span>
           <span class="pill pill-danger">${o.lines_out} out</span></div>
         <strong class="store">${esc(o.store)}</strong>
         <div class="muted small">Picked by ${esc(o.picker_name || '—')} · sent ${fmtTime(o.submitted_at)}</div>
@@ -26,7 +26,7 @@ export async function reviewView(ctx, id) {
   let o = await api.get(`/orders/${id}`);
 
   function render() {
-    ctx.chrome(`Review · Stop ${o.stop || '—'}`, '#/review');
+    ctx.chrome(`Review · ${stopLabel(o)}`, '#/review');
     const outs = o.lines.filter((l) => l.out_qty > 0);
     const rest = o.lines.filter((l) => !l.out_qty);
     const unresolved = outs.filter((l) => l.out_status !== 'confirmed');
@@ -85,6 +85,7 @@ export async function reviewView(ctx, id) {
     try { await api.post(`/orders/${o.id}/approve`); toast('Order approved', 'ok'); location.hash = '#/review'; } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.pick = () => { location.hash = `#/order/${o.id}`; };
+  ctx.actions.editStop = async () => { const fresh = await editStop(o); if (fresh) update(fresh); };
   ctx.actions.addNote = async () => { if (await addNote({ orderId: o.id, truck: o.truck })) ctx.refresh(); };
   ctx.actions.delNote = async (noteId) => { if (await deleteNote(noteId)) ctx.refresh(); };
 

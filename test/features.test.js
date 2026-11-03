@@ -167,3 +167,23 @@ test('VIP import previews first, flags duplicates and new items, then creates or
   const truck6 = await picker.get('/orders?truck=6&active=1');
   assert.equal(truck6[0].store, 'HILLTOP GROCERY');
 });
+
+test('supervisors can renumber a stop or make it a cart; carts come after the numbered stops', async () => {
+  const a = await order(2, '003', 'SMALL SHOP', [{ code: '00735', qty: 1 }]);
+  const b = await order(2, '004', 'BIG SHOP', [{ code: '00735', qty: 9 }]);
+  assert.equal((await picker.call('PUT', `/orders/${a.id}/stop`, { cart: true })).status, 403, 'pickers cannot');
+  assert.equal((await driver.call('PUT', `/orders/${a.id}/stop`, { cart: true })).status, 403, 'drivers cannot');
+  let s = await boss.call('PUT', `/orders/${a.id}/stop`, { stop: '003', cart: true });
+  assert.equal(s.status, 200);
+  assert.equal(s.data.is_cart, 1);
+  s = await admin.call('PUT', `/orders/${b.id}/stop`, { stop: '001' });
+  assert.equal(s.data.stop, '001');
+  assert.equal((await boss.call('PUT', `/orders/${b.id}/stop`, { stop: '', cart: false })).status, 400, 'a stop needs a number unless it is a cart');
+  const list = (await picker.get('/orders?truck=2&active=1')).filter((o) => ['SMALL SHOP', 'BIG SHOP'].includes(o.store));
+  assert.deepEqual(list.map((o) => [o.store, o.stop, o.is_cart]), [['BIG SHOP', '001', 0], ['SMALL SHOP', '003', 1]]);
+  const history = (await boss.get(`/orders/${b.id}`)).events.map((e) => e.type);
+  assert.ok(history.includes('stop_changed'));
+  s = await boss.call('PUT', `/orders/${a.id}/stop`, { cart: false });
+  assert.equal(s.data.is_cart, 0, 'turning cart off brings the stop number back');
+  assert.equal(s.data.stop, '003');
+});

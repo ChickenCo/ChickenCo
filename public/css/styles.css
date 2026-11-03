@@ -323,6 +323,7 @@ tr.click:active td { background: var(--bg); }
 .file-btn { margin-bottom: 12px; }
 .test-run { align-items: flex-start; font-size: .9rem; margin: 12px 0 0; background: var(--warn-bg); padding: 10px 12px; border-radius: 10px; }
 .test-run input { margin-top: 2px; }
+.cart-tag { display: inline-block; padding: 1px 8px; border-radius: 6px; background: #1f1b17; color: #fff; font-weight: 800; letter-spacing: .06em; font-size: .85em; }
 .keg-days { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
 .narrow-field input { max-width: 120px; }
 .day-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

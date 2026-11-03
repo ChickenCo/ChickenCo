@@ -1,6 +1,6 @@
 // Home: the Trucks menu, and the list of orders on one truck.
 import { api, qs } from '../api.js';
-import { esc, toast, statusPill, COMPANY, fmtTime, fmtNum, rateHtml } from '../ui.js';
+import { esc, toast, statusPill, COMPANY, fmtTime, fmtNum, rateHtml, stopLabel } from '../ui.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 
 const view = document.getElementById('view');
@@ -98,7 +98,7 @@ export async function truckView(ctx, truck) {
       return `
         <a class="card order-card status-${o.status}" href="#/${o.status === 'review' && ctx.can('supervisor') ? 'review' : 'order'}/${o.id}">
           <div class="row">
-            <span class="stop">${seq ? `<span class="load-seq">${seq}</span>` : ''}Stop ${esc(o.stop || '—')}</span>
+            <span class="stop">${seq ? `<span class="load-seq">${seq}</span>` : ''}${o.is_cart ? '<span class="cart-tag">CART</span>' : `Stop ${esc(o.stop || '—')}`}</span>
             ${statusPill(o.status)}
           </div>
           <strong class="store">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</strong>
@@ -113,10 +113,12 @@ export async function truckView(ctx, truck) {
     const byStop = (a, b) => (parseInt(a.stop, 10) || 0) - (parseInt(b.stop, 10) || 0) || String(a.stop).localeCompare(String(b.stop));
     let body;
     if (loadOrder) {
-      // The last stop goes on the truck first.
-      const seq = [...orders].sort(byStop).reverse();
+      // The last stop goes on the truck first. Carts aren't part of the pallet order; they're listed after.
+      const seq = orders.filter((o) => !o.is_cart).sort(byStop).reverse();
+      const carts = orders.filter((o) => o.is_cart);
       body = `<p class="muted small">Load in this order: the last stop goes on first, so the first stop comes off first.</p>
-        ${seq.map((o, i) => card(o, i + 1)).join('') || '<div class="empty muted">No orders on this truck.</div>'}`;
+        ${seq.map((o, i) => card(o, i + 1)).join('') || (carts.length ? '' : '<div class="empty muted">No orders on this truck.</div>')}
+        ${carts.length ? `<h2 class="section-title">Carts (${carts.length})</h2>${carts.map((o) => card(o)).join('')}` : ''}`;
     } else {
       const active = orders.filter((o) => o.status !== 'done');
       const done = orders.filter((o) => o.status === 'done');
@@ -140,7 +142,7 @@ export async function truckView(ctx, truck) {
   ctx.actions.next = async () => {
     try {
       const o = await api.post(`/trucks/${truck}/next`);
-      toast(`Stop ${o.stop}: ${o.store}`, 'ok');
+      toast(`${stopLabel(o)}: ${o.store}`, 'ok');
       location.hash = `#/order/${o.id}`;
     } catch (err) { toast(err.message, 'error'); render(); }
   };

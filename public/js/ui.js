@@ -17,6 +17,9 @@ export const STATUS = {
 };
 export const ROLE_LABEL = { driver: 'Driver', picker: 'Picker', supervisor: 'Supervisor', management: 'Management', admin: 'Admin' };
 
+// "Stop 008", or "Cart" for small orders that go on a cart instead of a pallet.
+export const stopLabel = (o) => (o.is_cart ? 'Cart' : `Stop ${o.stop || '—'}`);
+
 export const statusPill = (s) => `<span class="pill ${STATUS[s][1]}">${STATUS[s][0]}</span>`;
 
 export function fmtTime(ms) {

@@ -1,6 +1,6 @@
 // Supervisor: who is picking what right now, who has gone quiet, and items running out repeatedly.
 import { api } from '../api.js';
-import { esc, fmtTime, fmtNum, rateHtml } from '../ui.js';
+import { esc, fmtTime, fmtNum, rateHtml, stopLabel } from '../ui.js';
 
 const view = document.getElementById('view');
 const IDLE_MIN = 10;
@@ -25,7 +25,7 @@ export async function floorView(ctx) {
       <li class="line floor-row ${idle(p) ? 'idle' : ''}">
         <span class="line-main">
           <span class="line-name">${esc(p.name)}</span>
-          ${p.order ? `<a class="small" href="#/order/${p.order.id}">Truck ${p.order.truck ?? '?'} · Stop ${esc(p.order.stop)} · ${esc(p.order.store)}</a>
+          ${p.order ? `<a class="small" href="#/order/${p.order.id}">Truck ${p.order.truck ?? '?'} · ${esc(stopLabel(p.order))} · ${esc(p.order.store)}</a>
             <span class="progress"><span style="width:${p.order.units ? Math.round((p.order.done / p.order.units) * 100) : 0}%"></span></span>
             <span class="muted small">${p.order.done}/${p.order.units} cases${p.order.others ? ` · also holding ${p.order.others} other order${p.order.others === 1 ? '' : 's'}` : ''}</span>`
             : '<span class="muted small">Not on an order</span>'}

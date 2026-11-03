@@ -1,6 +1,7 @@
 // Management: list all orders, and enter / edit an order from the VIP pick list.
 import { api, qs } from '../api.js';
-import { esc, toast, choose, confirmBox, statusPill, fmtTime, ask } from '../ui.js';
+import { esc, toast, choose, confirmBox, statusPill, fmtTime, ask, stopLabel } from '../ui.js';
+import { editStop } from './pick.js';
 
 const view = document.getElementById('view');
 const UNITS = ['CASES', 'BTLS', 'KEGS', 'MISC'];
@@ -24,7 +25,7 @@ export async function ordersView(ctx) {
       <li class="line" data-act="open" data-arg="${o.id}">
         <span class="line-main">
           <span class="line-name">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</span>
-          <span class="muted small">${esc(ctx.truckName(o.truck))} · Stop ${esc(o.stop || '—')} · ${o.line_count} lines${o.order_date ? ` · ${esc(o.order_date)}` : ''}${o.picker_name ? ` · ${esc(o.picker_name)}` : ''}</span>
+          <span class="muted small">${esc(ctx.truckName(o.truck))} · ${o.is_cart ? '<b>Cart</b>' : esc(stopLabel(o))} · ${o.line_count} lines${o.order_date ? ` · ${esc(o.order_date)}` : ''}${o.picker_name ? ` · ${esc(o.picker_name)}` : ''}</span>
         </span>
         ${statusPill(o.status)}
       </li>`).join('') || '<li class="empty muted">No orders match.</li>';
@@ -40,10 +41,11 @@ export async function ordersView(ctx) {
   };
   ctx.actions.open = async (id) => {
     const o = await api.get(`/orders/${id}`);
-    const pick = await choose(`${o.store} · Stop ${o.stop || '—'}`, [
+    const pick = await choose(`${o.store} · ${stopLabel(o)}`, [
       { key: 'view', label: 'Open pick list', primary: true },
       o.status === 'review' && { key: 'review', label: 'Review outs' },
       { key: 'edit', label: 'Edit order' },
+      { key: 'stop', label: o.is_cart ? 'Change stop # / undo cart' : 'Change stop # or make it a cart' },
       ['open', 'picking'].includes(o.status) && { key: 'assign', label: 'Assign to a picker' },
       o.status === 'picking' && { key: 'release', label: `Release from ${o.picker_name}` },
       o.status === 'done' && { key: 'reopen', label: 'Reopen order' },
@@ -54,11 +56,12 @@ export async function ordersView(ctx) {
       if (pick === 'view') location.hash = `#/order/${o.id}`;
       if (pick === 'review') location.hash = `#/review/${o.id}`;
       if (pick === 'edit') location.hash = `#/orders/${o.id}/edit`;
+      if (pick === 'stop') await editStop(o);
       if (pick === 'assign') await assignPicker(o);
       if (pick === 'release') { await api.post(`/orders/${o.id}/release`); toast('Released'); }
       if (pick === 'reopen' && await confirmBox('Reopen order?', 'It goes back to picking, and outs will need to be reviewed again.', 'Reopen')) await api.post(`/orders/${o.id}/reopen`);
       if (pick === 'history') await showHistory(o);
-      if (pick === 'delete' && await confirmBox('Delete order?', `${o.store} (Stop ${o.stop}) and its picking history will be deleted. This cannot be undone.`, 'Delete', true)) {
+      if (pick === 'delete' && await confirmBox('Delete order?', `${o.store} (${stopLabel(o)}) and its picking history will be deleted. This cannot be undone.`, 'Delete', true)) {
         await api.del(`/orders/${o.id}`);
         toast('Order deleted');
       }
@@ -92,6 +95,9 @@ const EVENT_TEXT = {
   sent_back: (d) => `#${d.code}: sent back to picker`,
   approved: () => 'Approved',
   reopened: () => 'Reopened',
+  stop_changed: (d) => `Stop changed ${d.from || '—'} → ${d.to || '—'}`,
+  made_cart: () => 'Made a cart',
+  unmade_cart: () => 'No longer a cart',
 };
 
 async function showHistory(o) {

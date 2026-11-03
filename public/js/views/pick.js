@@ -5,7 +5,7 @@ import * as Scanner from '../scanner.js';
 import { normalizeBarcode } from '../barcode.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 import * as Wedge from '../wedge.js';
-import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, modalOpen, UNIT_SHORT, OUT_REASONS } from '../ui.js';
+import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, modalOpen, stopLabel, UNIT_SHORT, OUT_REASONS } from '../ui.js';
 
 const view = document.getElementById('view');
 
@@ -16,7 +16,8 @@ export function orderHeader(o, ctx) {
       <div class="muted small">${esc([o.address, o.city, o.state].filter(Boolean).join(', '))}</div>
       <div class="facts">
         <span><b>${esc(ctx.truckName(o.truck))}</b> · Load #${esc(o.load_no)}</span>
-        <span>Stop <b>${esc(o.stop || '—')}</b></span>
+        <span>${o.is_cart ? '<b class="cart-tag">CART</b>' : `Stop <b>${esc(o.stop || '—')}</b>`}</span>
+        ${ctx.can('supervisor') ? '<button class="link-btn" data-act="editStop">Edit stop</button>' : ''}
         ${o.day_no ? `<span>Day ${esc(o.day_no)}</span>` : ''}
         ${o.order_date ? `<span>${esc(o.order_date)}</span>` : ''}
         ${o.zone ? `<span>Zone ${esc(o.zone)}</span>` : ''}
@@ -105,7 +106,7 @@ export async function pickView(ctx, id) {
   };
 
   function render() {
-    ctx.chrome(`Stop ${o.stop || '—'}`, o.truck ? `#/truck/${o.truck}` : '#/');
+    ctx.chrome(stopLabel(o), o.truck ? `#/truck/${o.truck}` : '#/');
     const todo = todoLines();
     const outs = o.lines.filter((l) => l.out_qty > 0);
     const totalUnits = o.lines.reduce((s, l) => s + l.qty, 0);
@@ -412,6 +413,7 @@ export async function pickView(ctx, id) {
   };
 
   ctx.actions.undo = undo;
+  ctx.actions.editStop = async () => { const fresh = await editStop(o); if (fresh) update(fresh); };
   ctx.actions.bigOn = () => { big = true; store.set('pick-big-view', true); render(); };
   ctx.actions.bigOff = () => { big = false; store.set('pick-big-view', false); render(); };
   ctx.actions.bigNext = () => { bigIdx += 1; renderLists(); };
@@ -476,6 +478,22 @@ export async function pickView(ctx, id) {
   render();
 }
 
+// Supervisors and up: change the stop number, or mark the order as a cart (too small for a pallet).
+export async function editStop(o) {
+  return ask({
+    title: `${o.store}: stop`,
+    okText: 'Save',
+    body: `
+      <label>Stop number<input name="stop" inputmode="numeric" value="${esc(o.stop || '')}" autocomplete="off"></label>
+      <label class="radio"><input type="checkbox" name="cart" ${o.is_cart ? 'checked' : ''}> Cart (too small for a pallet). Shows "Cart" instead of the stop number.</label>`,
+    onOk: async (f) => {
+      const saved = await api.put(`/orders/${o.id}/stop`, { stop: f.elements.stop.value.trim(), cart: f.elements.cart.checked });
+      toast(saved.is_cart ? `${saved.store} is now a cart` : `${saved.store} is now Stop ${saved.stop}`, 'ok');
+      return saved;
+    },
+  });
+}
+
 // After finishing an order: offer the next unstarted stop on the same truck.
 export async function nextOrder(ctx, truck) {
   if (!truck) { location.hash = '#/'; return; }
@@ -486,7 +504,7 @@ export async function nextOrder(ctx, truck) {
   if (pick !== 'next') { location.hash = `#/truck/${truck}`; return; }
   try {
     const next = await api.post(`/trucks/${truck}/next`);
-    toast(`Stop ${next.stop}: ${next.store}`, 'ok');
+    toast(`${stopLabel(next)}: ${next.store}`, 'ok');
     location.hash = `#/order/${next.id}`;
   } catch (err) {
     toast(err.status === 404 ? `Every order on Truck ${truck} has been started` : err.message, err.status === 404 ? '' : 'error');

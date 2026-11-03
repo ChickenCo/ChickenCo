@@ -177,6 +177,8 @@ db.exec('CREATE INDEX IF NOT EXISTS orders_day ON orders(day_id)');
 if (!all('PRAGMA table_info(orders)').some((c) => c.name === 'vip_ref')) db.exec('ALTER TABLE orders ADD COLUMN vip_ref TEXT');
 if (!all('PRAGMA table_info(order_lines)').some((c) => c.name === 'invoice_no')) db.exec('ALTER TABLE order_lines ADD COLUMN invoice_no TEXT');
 db.exec('CREATE INDEX IF NOT EXISTS orders_vip_ref ON orders(vip_ref)');
+// Small orders that ride on a cart instead of a pallet show "Cart" instead of a stop number.
+if (!all('PRAGMA table_info(orders)').some((c) => c.name === 'is_cart')) db.exec('ALTER TABLE orders ADD COLUMN is_cart INTEGER NOT NULL DEFAULT 0');
 const loose = one(`SELECT COUNT(*) n, MIN(created_at) first, MAX(completed_at) last,
   SUM(status != 'done') open FROM orders WHERE day_id IS NULL`);
 if (loose.n) {

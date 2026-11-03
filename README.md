@@ -98,6 +98,12 @@ Also on the pick screen:
 - **Running out:** when the same item is marked out on 3 orders in one day,
   supervisors and management get a notification, and it's listed on the Floor screen.
 - Can add notes to orders, stores and trucks.
+- **Edit stop** (on an order, or in Manage orders) changes the stop number, or marks the
+  order as a **Cart** for small orders that don't go on a pallet. A cart shows **CART**
+  instead of its stop number everywhere. Carts are listed after the numbered stops, and
+  in Load order they're kept apart from the pallet sequence. Turning Cart off brings the
+  stop number back. Supervisors, management and admins can do this; each change is in
+  the order's history.
 
 **Management**
 - **Import from VIP:** choose VIP's **order record** export (the Excel .xlsx file; a CSV
