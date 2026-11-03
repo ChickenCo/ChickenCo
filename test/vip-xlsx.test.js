@@ -174,3 +174,18 @@ test('management uploads the file, imports one day, and re-importing is blocked'
   const trucks = await json('GET', '/trucks');
   assert.deepEqual(trucks.trucks.find((x) => x.truck === 6).loads, ['206']);
 });
+
+test('kegs are only kept for trucks due on keg days (Tuesday and Wednesday by default)', () => {
+  const { applyKegRule, deliveryWeekday } = require('../server/vip');
+  const parsed = parseImport(makeXlsx(ROWS), 'orderrecord.xlsx');
+  assert.equal(deliveryWeekday({ order_date: '11/03/26' }), 2);
+  assert.equal(deliveryWeekday({ order_date: '', day_no: '3' }), 3);
+  const tueWed = applyKegRule(parsed, [2, 3]);
+  assert.ok(tueWed.orders.some((o) => o.store === 'TEST TAVERN'), 'Tuesday keg stays');
+  assert.equal(tueWed.skipped.kegs, 0);
+  const wedOnly = applyKegRule(parsed, [3]);
+  assert.ok(!wedOnly.orders.some((o) => o.store === 'TEST TAVERN'), 'a Tuesday order with only kegs drops out');
+  assert.equal(wedOnly.skipped.kegs, 1);
+  assert.match(wedOnly.warnings.at(-1), /only kegs/);
+  assert.equal(wedOnly.days.find((d) => d.day_no === '2').cases, 12);
+});

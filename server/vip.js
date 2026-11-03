@@ -268,6 +268,39 @@ function parseOrderRecord(rows, { warehouseDigit = '0' } = {}) {
   return { orders, days, barcodes, skipped, warnings, format: 'VIP order record' };
 }
 
+// Delivery weekday of an order (0 = Sunday … 6 = Saturday), from its date or else the load's day digit.
+function deliveryWeekday(o) {
+  const m = String(o.order_date || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    return new Date(year, Number(m[1]) - 1, Number(m[2])).getDay();
+  }
+  const d = Number(o.day_no);
+  return d >= 1 && d <= 7 ? d % 7 : null;
+}
+
+// Kegs are only picked for trucks due on certain days (Tuesday and Wednesday by default).
+function applyKegRule(result, kegDays) {
+  const allowed = new Set(kegDays);
+  let kegs = 0;
+  const orders = result.orders.map((o) => {
+    const wd = deliveryWeekday(o);
+    if (wd == null || allowed.has(wd)) return o;
+    const lines = o.lines.filter((l) => l.unit !== 'KEGS');
+    kegs += o.lines.length - lines.length;
+    return lines.length === o.lines.length ? o : { ...o, lines };
+  });
+  const kept = orders.filter((o) => o.lines.length);
+  const emptied = orders.length - kept.length;
+  const warnings = [...(result.warnings || [])];
+  if (emptied) warnings.push(`${emptied} order${emptied === 1 ? ' had' : 's had'} only kegs on a day kegs aren't picked and ${emptied === 1 ? 'was' : 'were'} left out.`);
+  const days = result.days?.map((d) => {
+    const mine = kept.filter((o) => o.day_no === d.day_no);
+    return { ...d, orders: mine.length, cases: mine.reduce((s, o) => s + o.lines.reduce((t, l) => t + l.qty, 0), 0) };
+  }).filter((d) => d.orders);
+  return { ...result, orders: kept, days, warnings, skipped: result.skipped || kegs ? { ...(result.skipped || {}), kegs } : result.skipped };
+}
+
 function parseImport(input, filename = '', opts = {}) {
   if (Buffer.isBuffer(input) && isXlsx(input)) {
     const rows = readXlsx(input);
@@ -284,4 +317,4 @@ function parseImport(input, filename = '', opts = {}) {
   return parseVipText(text);
 }
 
-module.exports = { parseImport, parseVipText, parseCsv, parseOrderRecord, loadParts, upcOf };
+module.exports = { parseImport, parseVipText, parseCsv, parseOrderRecord, applyKegRule, deliveryWeekday, loadParts, upcOf };

@@ -25,7 +25,7 @@ export async function trucksView(ctx) {
               <span class="muted small">${t.loads?.length ? `Load #${t.loads.map(esc).join(', ')}` : 'No load yet'}</span>
               ${t.orders ? `
                 <div class="progress"><span style="width:${pct(t.unitsDone, t.units)}%"></span></div>
-                <span class="small">${t.done}/${t.orders} orders done${t.review ? ` · <b class="text-danger">${t.review} to review</b>` : ''}</span>`
+                <span class="small"><b>${fmtNum(t.units)} cases</b> · ${t.done}/${t.orders} orders done${t.review ? ` · <b class="text-danger">${t.review} to review</b>` : ''}</span>`
                 : '<span class="muted small">No orders</span>'}
             </div>
           </a>`).join('')}
@@ -125,7 +125,7 @@ export async function truckView(ctx, truck) {
     }
     const openCount = orders.filter((o) => o.status === 'open').length;
     view.innerHTML = `
-      ${known ? `<p class="muted small">${[...new Set(orders.map((o) => o.load_no))].length ? `Load #${[...new Set(orders.map((o) => o.load_no))].map(esc).join(', ')} · ` : ''}${orders.length} order${orders.length === 1 ? '' : 's'}</p>` : ''}
+      ${known ? `<p class="muted small">${[...new Set(orders.map((o) => o.load_no))].length ? `Load #${[...new Set(orders.map((o) => o.load_no))].map(esc).join(', ')} · ` : ''}${orders.length} order${orders.length === 1 ? '' : 's'} · <b>${fmtNum(orders.reduce((n, o) => n + o.units, 0))} cases</b></p>` : ''}
       ${known ? notesHtml(notes, ctx, { title: 'Loading notes' }) : ''}
       <nav class="tabs">
         <a href="#" data-act="mode" data-arg="pick" class="${loadOrder ? '' : 'active'}">Pick order</a>

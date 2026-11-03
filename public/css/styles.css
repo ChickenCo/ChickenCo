@@ -321,6 +321,7 @@ tr.click:active td { background: var(--bg); }
 
 /* Import */
 .file-btn { margin-bottom: 12px; }
+.keg-days { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
 .narrow-field input { max-width: 120px; }
 .day-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 @media (max-width: 420px) { .day-pick { grid-template-columns: 1fr; } }

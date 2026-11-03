@@ -67,6 +67,8 @@ const storeKey = (o) => String(o.account_no || o.store).trim().toUpperCase();
 const DEFAULT_TRUCKS = [1, 2, 3, 4, 5, 6].map((n) => ({ truck: n, load: String(200 + n) }));
 const trucks = () => getSetting('trucks', DEFAULT_TRUCKS);
 const warehouseDigit = () => getSetting('warehouse_digit', '0');
+// Delivery weekdays (0 = Sunday) whose trucks get kegs picked; other days' keg lines are left off.
+const kegDays = () => getSetting('keg_days', [2, 3]);
 function truckForLoad(load) {
   const s = String(load ?? '').trim();
   const t = trucks().find((x) => x.load === s);
@@ -172,6 +174,7 @@ api.get('/me', h((req) => ({
   user: req.user,
   trucks: trucks(),
   warehouseDigit: warehouseDigit(),
+  kegDays: kegDays(),
   vapidKey: push.publicKey(),
   version,
   appVersion: APP_VERSION,
@@ -366,7 +369,7 @@ api.post('/orders/import/preview', requireRole('management'),
     if (!input.length || (!raw && !input.trim())) fail(400, 'The file is empty');
     let parsed;
     try { parsed = vip.parseImport(input, filename, { warehouseDigit: warehouseDigit() }); } catch (err) { fail(400, err.message); }
-    const { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = parsed;
+    const { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = vip.applyKegRule(parsed, kegDays());
     const day = days.displayDay();
     return {
       format, warnings, skipped, days: dayGroups,
@@ -928,6 +931,13 @@ api.put('/settings/trucks', requireRole('admin'), h((req) => {
   setSetting('trucks', list.sort((a, b) => a.truck - b.truck));
   changed();
   return trucks();
+}));
+
+api.put('/settings/kegs', requireRole('admin'), h((req) => {
+  const list = (Array.isArray(req.body.days) ? req.body.days : []).map(int).filter((d) => d >= 0 && d <= 6);
+  setSetting('keg_days', [...new Set(list)].sort());
+  changed();
+  return { kegDays: kegDays() };
 }));
 
 // ---------- pick rates ----------

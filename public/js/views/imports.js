@@ -10,6 +10,7 @@ const SKIP_LABEL = {
   tax: 'tax / service charge lines',
   voided: 'voided lines',
   empties: 'empties and credits',
+  kegs: "kegs (not picked on this delivery day)",
 };
 
 // Delivery date for trucks loaded today, as MM/DD/YY (VIP's invoice date).
@@ -87,7 +88,7 @@ export async function importView(ctx) {
       <p class="muted small">${shown.length} order${shown.length === 1 ? '' : 's'}${skippedTotal ? ` · left out: ${Object.entries(skipped).filter(([, n]) => n).map(([k, n]) => `${fmtNum(n)} ${SKIP_LABEL[k] || k}`).join(', ')}` : ''}.
         ${barcodes?.total ? `<br>${fmtNum(barcodes.new)} new barcode${barcodes.new === 1 ? '' : 's'} from the UPC column will be added${barcodes.conflicts ? ` (${barcodes.conflicts} skipped: already linked to a different item)` : ''}.` : ''}</p>
       ${[...byTruck.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true })).map(([truck, list]) => `
-        <h2 class="section-title">${truck === '?' ? 'Unknown truck' : `Truck ${truck}`} · ${list.length} order${list.length === 1 ? '' : 's'}</h2>
+        <h2 class="section-title">${truck === '?' ? 'Unknown truck' : `Truck ${truck}`} · ${list.length} order${list.length === 1 ? '' : 's'} · ${fmtNum(list.reduce((n, x) => n + x.o.cases, 0))} cases</h2>
         ${list.map(({ o, i }) => `
           <section class="card import-order ${picked.has(i) ? '' : 'skipped'}">
             <label class="radio import-head"><input type="checkbox" data-i="${i}" ${picked.has(i) ? 'checked' : ''}>

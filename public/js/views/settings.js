@@ -32,6 +32,13 @@ export async function settingsView(ctx) {
           <button class="btn btn-primary" data-act="saveTrucks">Save trucks</button>
         </div>
       </section>
+      <section class="card">
+        <h2>Kegs</h2>
+        <p class="muted small">Kegs are only put on pick lists for trucks due on these days. On other days, keg lines from VIP are left off.</p>
+        <div class="keg-days">${[[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat']].map(([d, label]) =>
+          `<label class="radio"><input type="checkbox" name="kegDay" value="${d}" ${(ctx.server?.kegDays || [2, 3]).includes(d) ? 'checked' : ''}> ${label}</label>`).join('')}</div>
+        <button class="btn btn-ghost" data-act="saveKegs">Save keg days</button>
+      </section>
       <section class="card" id="backupBox"><h2>Backups</h2><p class="muted small">Loading…</p></section>
       <section class="card">
         <h2>Test run</h2>
@@ -62,6 +69,14 @@ export async function settingsView(ctx) {
     try {
       ctx.trucks = await api.put('/settings/trucks', { trucks: rows, warehouseDigit });
       ctx.warehouseDigit = warehouseDigit; rows = ctx.trucks.map((t) => ({ ...t })); render(); toast('Trucks saved', 'ok');
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  ctx.actions.saveKegs = async () => {
+    const days = [...view.querySelectorAll('input[name=kegDay]:checked')].map((b) => Number(b.value));
+    try {
+      const r = await api.put('/settings/kegs', { days });
+      if (ctx.server) ctx.server.kegDays = r.kegDays;
+      toast('Keg days saved', 'ok');
     } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.demo = async () => {
