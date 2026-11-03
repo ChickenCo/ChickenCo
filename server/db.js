@@ -173,6 +173,10 @@ if (!orderCols.includes('is_test')) {
   db.exec('UPDATE orders SET is_test = 1 WHERE created_by IS NULL'); // demo + test-run orders
 }
 db.exec('CREATE INDEX IF NOT EXISTS orders_day ON orders(day_id)');
+// VIP import: which VIP order an order came from, and each line's invoice (for billing outs).
+if (!all('PRAGMA table_info(orders)').some((c) => c.name === 'vip_ref')) db.exec('ALTER TABLE orders ADD COLUMN vip_ref TEXT');
+if (!all('PRAGMA table_info(order_lines)').some((c) => c.name === 'invoice_no')) db.exec('ALTER TABLE order_lines ADD COLUMN invoice_no TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS orders_vip_ref ON orders(vip_ref)');
 const loose = one(`SELECT COUNT(*) n, MIN(created_at) first, MAX(completed_at) last,
   SUM(status != 'done') open FROM orders WHERE day_id IS NULL`);
 if (loose.n) {

@@ -19,7 +19,7 @@ export function notesHtml(notes, ctx, { addArg = '', title = 'Notes' } = {}) {
       ${notes?.length ? `<ul class="notes">${notes.map((n) => `
         <li>
           <span class="note-text">${esc(n.text)}</span>
-          <span class="muted small">${SCOPE_LABEL[n.scope](n)} · ${esc(n.user_name || 'Someone')}${n.user_role ? ` (${ROLE_LABEL[n.user_role] || n.user_role})` : ''} · ${fmtTime(n.created_at)}
+          <span class="muted small">${SCOPE_LABEL[n.scope](n)} · ${n.user_id ? esc(n.user_name || 'Someone') : 'From VIP'}${n.user_role ? ` (${ROLE_LABEL[n.user_role] || n.user_role})` : ''} · ${fmtTime(n.created_at)}
             ${n.user_id === ctx.user.id || ctx.can('management') ? `<button class="link-btn" data-act="delNote" data-arg="${n.id}">Remove</button>` : ''}</span>
         </li>`).join('')}</ul>` : '<p class="muted small">No notes yet.</p>'}
     </section>`;

@@ -17,7 +17,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/api', express.json({ limit: '1mb' }), auth.loadUser, api);
+app.use('/api', express.json({ limit: '10mb' }), auth.loadUser, api);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
 const pub = path.join(__dirname, '..', 'public');

@@ -62,15 +62,32 @@ const canNote = (user) => user.role === 'driver' || atLeast(user, 'supervisor');
 const storeKey = (o) => String(o.account_no || o.store).trim().toUpperCase();
 
 // ---------- trucks ----------
+// VIP load numbers are day digit + warehouse digit + truck digit (101 = day 1, warehouse 0, truck 1).
+// Our warehouse is the one whose middle digit matches; any load # listed per truck in Settings also counts.
 const DEFAULT_TRUCKS = [1, 2, 3, 4, 5, 6].map((n) => ({ truck: n, load: String(200 + n) }));
 const trucks = () => getSetting('trucks', DEFAULT_TRUCKS);
+const warehouseDigit = () => getSetting('warehouse_digit', '0');
 function truckForLoad(load) {
-  const t = trucks().find((x) => x.load === String(load).trim());
-  return t ? t.truck : null;
+  const s = String(load ?? '').trim();
+  const t = trucks().find((x) => x.load === s);
+  if (t) return t.truck;
+  const p = vip.loadParts(s);
+  return p && p.warehouse === warehouseDigit() && trucks().some((x) => x.truck === p.truck) ? p.truck : null;
 }
-function loadForTruck(truck) {
+function loadsForTruck(truck) {
   const t = trucks().find((x) => x.truck === int(truck));
-  return t ? t.load : null;
+  if (!t) return [];
+  const w = warehouseDigit();
+  return [...new Set([t.load, ...(t.truck <= 9 ? [1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => `${d}${w}${t.truck}`) : [])])];
+}
+// The load # to give a typed-in order: whatever that truck is already using today, else its Settings load #.
+function loadForTruck(truck) {
+  const loads = loadsForTruck(truck);
+  if (!loads.length) return null;
+  const day = days.displayDay();
+  const used = day && !day.ended_at && one(`SELECT load_no FROM orders WHERE day_id = ? AND load_no IN (${loads.map(() => '?').join(',')})
+    ORDER BY id DESC LIMIT 1`, day.id, ...loads);
+  return used ? used.load_no : trucks().find((x) => x.truck === int(truck)).load;
 }
 
 // ---------- order helpers ----------
@@ -154,6 +171,7 @@ api.use((req, res, next) => (req.user ? next() : res.status(401).json({ error: '
 api.get('/me', h((req) => ({
   user: req.user,
   trucks: trucks(),
+  warehouseDigit: warehouseDigit(),
   vapidKey: push.publicKey(),
   version,
   appVersion: APP_VERSION,
@@ -191,6 +209,7 @@ api.get('/trucks', h(() => {
     const mine = orders.filter((o) => o.truck === truck);
     return {
       truck, load,
+      loads: [...new Set(mine.map((o) => o.load_no))].sort(),
       orders: mine.length,
       open: mine.filter((o) => o.status === 'open').length,
       picking: mine.filter((o) => o.status === 'picking').length,
@@ -207,13 +226,10 @@ api.get('/trucks', h(() => {
 api.get('/orders', h((req) => {
   const where = [];
   const params = [];
-  if (req.query.truck === 'none') {
-    const loads = trucks().map((t) => t.load);
-    where.push(`o.load_no NOT IN (${loads.map(() => '?').join(',') || "''"})`);
+  if (req.query.truck && req.query.truck !== 'none') {
+    const loads = loadsForTruck(req.query.truck);
+    where.push(`o.load_no IN (${loads.map(() => '?').join(',') || "'__none__'"})`);
     params.push(...loads);
-  } else if (req.query.truck) {
-    where.push('o.load_no = ?');
-    params.push(loadForTruck(req.query.truck) ?? '__none__');
   }
   if (req.query.active) {
     // The work day shown on the Trucks screen.
@@ -231,7 +247,8 @@ api.get('/orders', h((req) => {
   }
   const sql = `${ORDER_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY CASE o.status WHEN 'done' THEN 1 ELSE 0 END, CAST(o.stop AS INTEGER), o.stop, o.id DESC LIMIT 500`;
-  return all(sql, ...params).map(withTruck);
+  const rows = all(sql, ...params).map(withTruck);
+  return req.query.truck === 'none' ? rows.filter((o) => o.truck == null) : rows;
 }));
 
 api.get('/orders/:id', h((req) => {
@@ -267,6 +284,7 @@ function readOrderBody(body) {
     qty: int(l.qty),
     unit: UNITS.includes(str(l.unit).toUpperCase()) ? str(l.unit).toUpperCase() : 'CASES',
     vipOut: !!l.vipOut,
+    invoice: str(l.invoice, 20) || null,
   }));
   if (!lines.length) fail(400, 'Add at least one item');
   lines.forEach((l, i) => {
@@ -297,10 +315,10 @@ function saveLines(orderId, lines, userId) {
            out_reason = ?, out_status = CASE WHEN ? > 0 THEN COALESCE(out_status, 'pending') ELSE NULL END WHERE id = ?`,
       i, l.code, l.description, l.qty, l.unit, picked, outQty, outReason, outQty, prev.id);
     } else {
-      run(`INSERT INTO order_lines (order_id, seq, code, description, qty, unit, out_qty, out_reason, out_status, out_by, out_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      run(`INSERT INTO order_lines (order_id, seq, code, description, qty, unit, out_qty, out_reason, out_status, out_by, out_at, invoice_no)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       orderId, i, l.code, l.description, l.qty, l.unit,
-      l.vipOut ? l.qty : 0, l.vipOut ? 'vip' : null, l.vipOut ? 'pending' : null, l.vipOut ? userId : null, l.vipOut ? Date.now() : null);
+      l.vipOut ? l.qty : 0, l.vipOut ? 'vip' : null, l.vipOut ? 'pending' : null, l.vipOut ? userId : null, l.vipOut ? Date.now() : null, l.invoice);
     }
   });
   existing.filter((e) => !keep.has(e.id)).forEach((e) => run('DELETE FROM order_lines WHERE id = ?', e.id));
@@ -309,12 +327,15 @@ function saveLines(orderId, lines, userId) {
 function createOrder(body, userId, how = 'created') {
   const { header, lines } = readOrderBody(body);
   return tx(() => {
-    const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at, vip_ref)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     days.openDayId(), header.load_no, header.stop, header.store, header.account_no, header.address, header.city, header.state,
-    header.day_no, header.order_date, header.zone, userId, Date.now());
+    header.day_no, header.order_date, header.zone, userId, Date.now(), str(body.vip_ref, 80) || null);
     const orderId = Number(r.lastInsertRowid);
     saveLines(orderId, lines, userId);
+    // Delivery notes that came with the order from VIP ("cooler take to east 80").
+    (Array.isArray(body.notes) ? body.notes : []).map((n) => str(n, 500)).filter(Boolean).forEach((text) =>
+      run("INSERT INTO notes (scope, order_id, text, user_id, created_at) VALUES ('order', ?, ?, NULL, ?)", orderId, text, Date.now()));
     logEvent(orderId, userId, how);
     return orderId;
   });
@@ -327,39 +348,75 @@ api.post('/orders', requireRole('management'), h((req) => {
 }));
 
 // VIP import: read a file into orders and show them first; nothing is saved until /orders/import.
-api.post('/orders/import/preview', requireRole('management'), h((req) => {
-  const text = String(req.body.text || '');
-  if (!text.trim()) fail(400, 'The file is empty');
-  const { orders, warnings } = vip.parseImport(text, str(req.body.filename));
-  const day = days.displayDay();
-  return {
-    warnings,
-    orders: orders.map((o) => {
-      const dup = day && !day.ended_at && one('SELECT id FROM orders WHERE day_id = ? AND load_no = ? AND stop = ? AND store = ?',
-        day.id, o.load_no, o.stop, o.store);
-      return {
-        ...o,
-        truck: truckForLoad(o.load_no),
-        duplicateOf: dup ? dup.id : null,
-        newItems: [...new Set(o.lines.filter((l) => !one('SELECT 1 FROM items WHERE code = ?', l.code.toUpperCase())).map((l) => l.code))],
-        cases: o.lines.reduce((s, l) => s + l.qty, 0),
-      };
-    }),
-  };
-}));
+// The file comes either as raw bytes (the .xlsx order record) or as JSON { text, filename }.
+function barcodeStatus(list) {
+  let fresh = 0, known = 0, conflicts = 0;
+  for (const b of list) {
+    const row = one('SELECT code FROM item_barcodes WHERE gtin = ?', normalizeBarcode(b.upc));
+    if (!row) fresh++; else if (row.code === b.code) known++; else conflicts++;
+  }
+  return { total: list.length, new: fresh, known, conflicts };
+}
+
+api.post('/orders/import/preview', requireRole('management'),
+  express.raw({ type: 'application/octet-stream', limit: '40mb' }), h((req) => {
+    const raw = Buffer.isBuffer(req.body) ? req.body : null;
+    const filename = str(raw ? decodeURIComponent(String(req.headers['x-filename'] || '')) : req.body.filename);
+    const input = raw || String(req.body.text || '');
+    if (!input.length || (!raw && !input.trim())) fail(400, 'The file is empty');
+    let parsed;
+    try { parsed = vip.parseImport(input, filename, { warehouseDigit: warehouseDigit() }); } catch (err) { fail(400, err.message); }
+    const { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = parsed;
+    const day = days.displayDay();
+    return {
+      format, warnings, skipped, days: dayGroups,
+      barcodes: { ...barcodeStatus(barcodes), list: barcodes },
+      orders: orders.map((o) => {
+        const dup = (o.vip_ref && one('SELECT id FROM orders WHERE vip_ref = ?', o.vip_ref))
+          || (day && !day.ended_at && one('SELECT id FROM orders WHERE day_id = ? AND load_no = ? AND stop = ? AND store = ?', day.id, o.load_no, o.stop, o.store));
+        return {
+          ...o,
+          truck: truckForLoad(o.load_no),
+          duplicateOf: dup ? dup.id : null,
+          newItems: [...new Set(o.lines.filter((l) => !one('SELECT 1 FROM items WHERE code = ?', l.code.toUpperCase())).map((l) => l.code))],
+          cases: o.lines.reduce((s, l) => s + l.qty, 0),
+        };
+      }),
+    };
+  }));
 
 api.post('/orders/import', requireRole('management'), h((req) => {
-  const list = Array.isArray(req.body.orders) ? req.body.orders.slice(0, 500) : [];
+  const list = Array.isArray(req.body.orders) ? req.body.orders.slice(0, 1000) : [];
   const created = [];
   const skipped = [];
   for (const o of list) {
+    if (o.vip_ref && one('SELECT 1 FROM orders WHERE vip_ref = ?', str(o.vip_ref, 80))) {
+      skipped.push({ store: o.store, stop: o.stop, error: 'Already imported' });
+      continue;
+    }
     try { created.push(createOrder(o, req.user.id, 'imported')); } catch (err) {
       if (!(err instanceof HttpError)) throw err;
       skipped.push({ store: o.store, stop: o.stop, error: err.message });
     }
   }
-  if (created.length) changed();
-  return { created: created.length, skipped };
+  // UPCs from the file become barcodes, unless that barcode already belongs to a different item.
+  let barcodesAdded = 0;
+  const codes = Array.isArray(req.body.barcodes) ? req.body.barcodes.slice(0, 20000) : [];
+  tx(() => {
+    for (const b of codes) {
+      const gtin = normalizeBarcode(str(b.upc, 20));
+      const code = str(b.code, 40).toUpperCase();
+      if (!gtin || !code || one('SELECT 1 FROM item_barcodes WHERE gtin = ?', gtin)) continue;
+      if (!one('SELECT 1 FROM items WHERE code = ?', code)) {
+        if (!str(b.description)) continue;
+        run('INSERT INTO items (code, description) VALUES (?, ?)', code, str(b.description));
+      }
+      run("INSERT INTO item_barcodes (gtin, code, status, added_by, created_at) VALUES (?, ?, 'confirmed', ?, ?)", gtin, code, req.user.id, Date.now());
+      barcodesAdded++;
+    }
+  });
+  if (created.length || barcodesAdded) changed();
+  return { created: created.length, skipped, barcodesAdded };
 }));
 
 api.put('/orders/:id', requireRole('management'), h((req) => {
@@ -515,10 +572,10 @@ function checkRepeatOut(order, line) {
 api.post('/trucks/:truck/next', h((req) => {
   if (!canPick(req.user)) fail(403, 'Drivers can view orders and leave notes, but not pick');
   const day = days.displayDay();
-  const load = loadForTruck(req.params.truck);
-  const id = day && load && tx(() => {
-    const o = one(`SELECT id FROM orders WHERE day_id = ? AND load_no = ? AND status = 'open'
-      ORDER BY CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, load);
+  const loads = loadsForTruck(req.params.truck);
+  const id = day && loads.length && tx(() => {
+    const o = one(`SELECT id FROM orders WHERE day_id = ? AND load_no IN (${loads.map(() => '?').join(',')}) AND status = 'open'
+      ORDER BY CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, ...loads);
     if (!o) return null;
     run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?", req.user.id, Date.now(), o.id);
     logEvent(o.id, req.user.id, 'started');
@@ -864,6 +921,10 @@ api.put('/settings/trucks', requireRole('admin'), h((req) => {
   if (!list.length || list.some((t) => !(t.truck > 0) || !t.load)) fail(400, 'Every truck needs a number and a load #');
   if (new Set(list.map((t) => t.load)).size !== list.length) fail(400, 'Each load # can only belong to one truck');
   if (new Set(list.map((t) => t.truck)).size !== list.length) fail(400, 'Truck numbers must be different');
+  if (req.body.warehouseDigit !== undefined) {
+    if (!/^\d$/.test(String(req.body.warehouseDigit))) fail(400, 'The warehouse digit is a single number, 0 to 9');
+    setSetting('warehouse_digit', String(req.body.warehouseDigit));
+  }
   setSetting('trucks', list.sort((a, b) => a.truck - b.truck));
   changed();
   return trucks();
@@ -910,7 +971,7 @@ api.get('/days/:id', requireRole('management'), h((req) => {
 api.get('/reports/outs', requireRole('management'), h((req) => {
   const from = int(req.query.from) || 0;
   const to = int(req.query.to) || Date.now();
-  return all(`SELECT o.id AS order_id, o.load_no, o.stop, o.store, o.order_date, o.status, l.code, l.description, l.qty,
+  return all(`SELECT o.id AS order_id, o.load_no, o.stop, o.store, o.account_no, o.order_date, o.status, l.invoice_no, l.code, l.description, l.qty,
       l.out_qty, l.out_reason, l.out_status, l.out_at, ob.name AS out_by_name, rb.name AS reviewed_by_name, l.reviewed_at
     FROM order_lines l JOIN orders o ON o.id = l.order_id
     LEFT JOIN users ob ON ob.id = l.out_by LEFT JOIN users rb ON rb.id = l.reviewed_by

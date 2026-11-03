@@ -41,7 +41,7 @@ const ctx = {
   truckName: (n) => (n ? `Truck ${n}` : 'Unknown truck'),
   async reloadMe() {
     const me = await api.get('/me');
-    Object.assign(ctx, { user: me.user, trucks: me.trucks, vapidKey: me.vapidKey, server: me });
+    Object.assign(ctx, { user: me.user, trucks: me.trucks, warehouseDigit: me.warehouseDigit, vapidKey: me.vapidKey, server: me });
     lastVersion = me.version;
     loadedApp = loadedApp || me.appVersion;
   },

@@ -17,7 +17,10 @@ export async function settingsView(ctx) {
       ${srv.storageWarning ? `<div class="banner danger"><b>Data is not being saved.</b> ${esc(srv.storageWarning)}</div>` : ''}
       <section class="card">
         <h2>Trucks</h2>
-        <p class="muted small">Which load # on the VIP pick list belongs to which truck.</p>
+        <p class="muted small">VIP load numbers are <b>day · warehouse · truck</b>: load 201 is day 2, warehouse 0, truck 1.
+          Orders whose middle digit matches ours go to the truck in the last digit.</p>
+        <label class="narrow-field">Our warehouse digit (middle digit of the load #)<input id="whDigit" inputmode="numeric" maxlength="1" value="${esc(ctx.warehouseDigit ?? '0')}"></label>
+        <p class="muted small">The load # next to each truck is used for orders typed in by hand when that truck has no VIP orders yet today.</p>
         <div id="truckRows">${rows.map((t, i) => `
           <div class="truck-row" data-i="${i}">
             <label>Truck<input name="truck" type="number" inputmode="numeric" value="${t.truck}"></label>
@@ -55,7 +58,11 @@ export async function settingsView(ctx) {
   ctx.actions.addTruck = () => { const n = Math.max(0, ...rows.map((r) => r.truck)) + 1; rows.push({ truck: n, load: String(200 + n) }); render(); };
   ctx.actions.delTruck = (i) => { rows.splice(Number(i), 1); render(); };
   ctx.actions.saveTrucks = async () => {
-    try { ctx.trucks = await api.put('/settings/trucks', { trucks: rows }); rows = ctx.trucks.map((t) => ({ ...t })); render(); toast('Trucks saved', 'ok'); } catch (err) { toast(err.message, 'error'); }
+    const warehouseDigit = document.getElementById('whDigit').value.trim();
+    try {
+      ctx.trucks = await api.put('/settings/trucks', { trucks: rows, warehouseDigit });
+      ctx.warehouseDigit = warehouseDigit; rows = ctx.trucks.map((t) => ({ ...t })); render(); toast('Trucks saved', 'ok');
+    } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.demo = async () => {
     if (!await confirmBox('Load demo data?', 'Sample orders, items and three test logins are added. Use this for trying things out, not on the real system.', 'Load')) return;

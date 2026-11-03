@@ -1,7 +1,10 @@
-// Reads orders out of VIP files. Two formats for now:
-//  1. The IN005 PICK LIST report saved as text (same layout as the printed sheet).
-//  2. A CSV with a header row (load, stop, store, ..., code, description, qty, unit, out).
-// This was written from a photo of the printed sheet; it will be tuned against real export files.
+// Reads orders out of VIP files:
+//  1. The VIP "order record" export (Order Details sheet, .xlsx or .csv). This is the main one.
+//     It holds every line for every warehouse; only loads whose middle digit is ours are used.
+//  2. The IN005 PICK LIST report saved as text (same layout as the printed sheet).
+//  3. A simple CSV with a header row (load, stop, store, ..., code, description, qty, unit, out).
+
+const { readXlsx, isXlsx } = require('./xlsx');
 
 const UNIT_COLS = ['CASES', 'BTLS', 'KEGS', 'MISC'];
 
@@ -143,9 +146,142 @@ function parseCsv(text) {
   return { orders: [...byKey.values()], warnings };
 }
 
-function parseImport(text, filename = '') {
-  const looksCsv = /\.(csv|tsv)$/i.test(filename) || (!/PICK LIST/i.test(text) && /^[^\n]*(,|\t)[^\n]*\n/.test(text));
-  return looksCsv ? parseCsv(text) : parseVipText(text);
+// ---------- VIP order record export ----------
+// Load # is day digit + warehouse digit + truck digit: 101 = day 1, warehouse 0, truck 1.
+const loadParts = (load) => {
+  const m = String(load).trim().match(/^(\d)(\d)(\d)$/);
+  return m ? { day: m[1], warehouse: m[2], truck: Number(m[3]) } : null;
+};
+
+const UOM_UNIT = {
+  'case beer': 'CASES', 'case non-alcohol': 'CASES', 'case wine': 'CASES', 'case': 'CASES',
+  'each wine': 'BTLS', 'each': 'BTLS', 'bottle': 'BTLS',
+  'quarter keg': 'KEGS', 'half keg': 'KEGS', 'sixth keg': 'KEGS', 'keg': 'KEGS',
+  miscellaneous: 'MISC',
+};
+
+const num = (v) => (typeof v === 'number' ? v : Number(String(v ?? '').replace(/,/g, '')) || 0);
+const txt = (v) => (typeof v === 'number' && Number.isInteger(v) ? String(v) : clean(v));
+const vipDate = (d) => { const m = String(d).match(/^(\d{4})(\d{2})(\d{2})$/); return m ? `${m[2]}/${m[3]}/${m[1].slice(2)}` : ''; };
+
+// UPCs come with the leading zero dropped (11 digits) or as full 12/13/14-digit codes.
+function upcOf(v) {
+  const s = String(v ?? '').replace(/\D/g, '');
+  if (s.length === 11) return `0${s}`;
+  if (s.length === 8 || (s.length >= 12 && s.length <= 14)) return s;
+  return null;
 }
 
-module.exports = { parseImport, parseVipText, parseCsv };
+const isOrderRecord = (head) => {
+  const h = head.map((x) => clean(x).toLowerCase());
+  return h.includes('load #') && h.includes('product id') && h.includes('order quantity');
+};
+
+function parseOrderRecord(rows, { warehouseDigit = '0' } = {}) {
+  const head = rows[0].map((x) => clean(x).toLowerCase());
+  const col = (name) => head.indexOf(name.toLowerCase());
+  const C = {
+    retailer: col('Retailer ID'), store: col('DBA'), code: col('Product ID'), desc: col('Product Description'),
+    qty: col('Order Quantity'), invoice: col('Invoice Number'), invoiceDate: col('Invoice Date'), uom: col('Unit of Measure'),
+    lineNo: col('Order Line Number'), voided: col('Line Voided?'), upc: col('UPC'), origin: col('Order Origin'),
+    load: col('Load #'), stop: col('Stop Number'), picked: col('Picked?'), type: col('Type of Order Line'),
+    pricing: col('Pricing Origin'), day: col('Day'),
+  };
+  for (const k of ['retailer', 'store', 'code', 'desc', 'qty', 'uom', 'load']) {
+    if (C[k] < 0) return { orders: [], days: [], barcodes: [], skipped: {}, warnings: [`Missing the "${k}" column. Is this the VIP order record export?`] };
+  }
+  const get = (r, k) => (C[k] >= 0 ? r[C[k]] : '');
+  const skipped = { otherWarehouses: 0, voided: 0, returnsAndCredits: 0, tax: 0, empties: 0 };
+  const groups = new Map();
+  const upcs = new Map();
+  const warnings = [];
+
+  for (const r of rows.slice(1)) {
+    const load = txt(get(r, 'load'));
+    const lp = loadParts(load);
+    if (!lp || lp.warehouse !== String(warehouseDigit)) { skipped.otherWarehouses++; continue; }
+    if (clean(get(r, 'voided')).toUpperCase() === 'Y') { skipped.voided++; continue; }
+    const retailer = txt(get(r, 'retailer'));
+    const key = `${load}|${retailer}`;
+    if (!groups.has(key)) {
+      groups.set(key, { load_no: load, day_no: lp.day, truck: lp.truck, account_no: retailer, store: clean(get(r, 'store')),
+        stops: new Map(), dates: new Set(), dayName: clean(get(r, 'day')), invoices: new Set(), lines: [], messages: new Map() });
+    }
+    const g = groups.get(key);
+    const uom = clean(get(r, 'uom')).toLowerCase();
+    const invoice = txt(get(r, 'invoice'));
+    const date = vipDate(txt(get(r, 'invoiceDate')));
+    if (date) g.dates.add(date);
+
+    // Invoice messages are notes for the delivery ("cooler take to east 80"), split over several lines.
+    if (uom === 'invoice message' || num(get(r, 'type')) === 6) {
+      const m = g.messages.get(invoice) || [];
+      m.push({ n: num(get(r, 'lineNo')), text: clean(get(r, 'desc')) });
+      g.messages.set(invoice, m);
+      continue;
+    }
+    if (/^MISC SER CHG/i.test(clean(get(r, 'desc'))) || /^tax$/i.test(clean(get(r, 'origin')))) { skipped.tax++; continue; }
+    if (uom === 'returned empty' || uom === 'misc credit/debit') { skipped.empties++; continue; }
+    const qty = num(get(r, 'qty'));
+    const picked = clean(get(r, 'picked'));
+    const stop = num(get(r, 'stop'));
+    // Lines VIP doesn't pick are returns, credits and pricing corrections, not product to pull.
+    // The one exception: a regular invoice line VIP couldn't pick is a stock-out (*OUT on the sheet).
+    const vipOut = picked === '0' && qty > 0 && /invoice pricing/i.test(clean(get(r, 'pricing')));
+    if (qty <= 0 || (picked === '0' && !vipOut)) { skipped.returnsAndCredits++; continue; }
+    if (stop) g.stops.set(stop, (g.stops.get(stop) || 0) + 1);
+    if (invoice && invoice !== '0') g.invoices.add(invoice);
+    const code = txt(get(r, 'code')).toUpperCase();
+    const description = clean(get(r, 'desc'));
+    g.lines.push({ code, description, qty, unit: UOM_UNIT[uom] || 'CASES', vipOut, invoice });
+    const upc = upcOf(get(r, 'upc'));
+    if (upc && code) {
+      if (!upcs.has(upc)) upcs.set(upc, new Map());
+      upcs.get(upc).set(code, description);
+    }
+  }
+
+  const orders = [...groups.values()].filter((g) => g.lines.length).map((g) => {
+    const stop = [...g.stops.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const notes = [...new Set([...g.messages.values()].map((m) => m.sort((a, b) => a.n - b.n).map((x) => x.text).join(' ').trim()).filter(Boolean))];
+    return {
+      load_no: g.load_no, day_no: g.day_no, truck: g.truck, stop: stop ? String(stop).padStart(3, '0') : '',
+      store: g.store, account_no: g.account_no, address: '', city: '', state: '', zone: '',
+      order_date: [...g.dates].sort().at(-1) || '', dayName: g.dayName,
+      invoices: [...g.invoices], notes, lines: g.lines,
+      vip_ref: `${g.load_no}:${g.account_no}:${[...g.dates].sort().at(-1) || ''}`,
+    };
+  }).sort((a, b) => a.load_no.localeCompare(b.load_no) || (parseInt(a.stop, 10) || 0) - (parseInt(b.stop, 10) || 0));
+  const empty = groups.size - orders.length;
+  if (empty) warnings.push(`${empty} store${empty === 1 ? ' had' : 's had'} nothing to pick (only returns, credits or notes) and ${empty === 1 ? 'was' : 'were'} left out.`);
+
+  // One delivery day per first digit of the load number.
+  const days = [...new Set(orders.map((o) => o.day_no))].sort().map((d) => {
+    const mine = orders.filter((o) => o.day_no === d);
+    return { day_no: d, dayName: mine.find((o) => o.dayName && o.dayName !== 'Unassigned')?.dayName || '',
+      date: [...new Set(mine.map((o) => o.order_date))].sort().at(-1) || '',
+      loads: [...new Set(mine.map((o) => o.load_no))].sort(), orders: mine.length, cases: mine.reduce((s, o) => s + o.lines.reduce((t, l) => t + l.qty, 0), 0) };
+  });
+  // A UPC listed under two different items is ambiguous; leave it out.
+  const barcodes = [...upcs.entries()].filter(([, codes]) => codes.size === 1)
+    .map(([upc, codes]) => { const [[code, description]] = [...codes]; return { upc, code, description }; });
+  return { orders, days, barcodes, skipped, warnings, format: 'VIP order record' };
+}
+
+function parseImport(input, filename = '', opts = {}) {
+  if (Buffer.isBuffer(input) && isXlsx(input)) {
+    const rows = readXlsx(input);
+    if (!rows.length || !isOrderRecord(rows[0])) return { orders: [], warnings: ["This spreadsheet doesn't look like the VIP order record export."] };
+    return parseOrderRecord(rows, opts);
+  }
+  const text = Buffer.isBuffer(input) ? input.toString('utf8') : String(input);
+  const looksCsv = /\.(csv|tsv)$/i.test(filename) || (!/PICK LIST/i.test(text) && /^[^\n]*(,|\t)[^\n]*\n/.test(text));
+  if (looksCsv) {
+    const rows = csvRows(text);
+    if (rows.length && isOrderRecord(rows[0])) return parseOrderRecord(rows, opts);
+    return parseCsv(text);
+  }
+  return parseVipText(text);
+}
+
+module.exports = { parseImport, parseVipText, parseCsv, parseOrderRecord, loadParts, upcOf };

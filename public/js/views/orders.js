@@ -136,7 +136,7 @@ export async function orderEditView(ctx, id) {
         <section class="card">
           <h2>Pick list header</h2>
           <div class="grid-2">
-            <label>Truck<select name="truck" required><option value="">Choose…</option>${ctx.trucks.map((t) => `<option value="${t.truck}" ${String(t.truck) === String(d.truck) ? 'selected' : ''}>Truck ${t.truck} (Load #${esc(t.load)})</option>`).join('')}</select></label>
+            <label>Truck<select name="truck" required><option value="">Choose…</option>${ctx.trucks.map((t) => `<option value="${t.truck}" ${String(t.truck) === String(d.truck) ? 'selected' : ''}>Truck ${t.truck}</option>`).join('')}</select></label>
             ${field('stop', 'Stop', 'inputmode="numeric"')}
           </div>
           ${field('store', 'Store name', 'required autocapitalize="characters"')}
@@ -219,8 +219,8 @@ export async function orderEditView(ctx, id) {
     e.preventDefault();
     const body = { ...d, lines: d.lines.filter((l) => l.code.trim()) };
     delete body.events;
-    const truck = ctx.trucks.find((t) => String(t.truck) === String(d.truck));
-    if (truck) body.load_no = truck.load;
+    // Keep the order's load # unless the truck was changed; the server picks the load # for the new truck.
+    if (!order || String(d.truck) !== String(order.truck)) body.load_no = '';
     try {
       const saved = editing ? await api.put(`/orders/${id}`, body) : await api.post('/orders', body);
       toast(`Saved ${saved.store}`, 'ok');

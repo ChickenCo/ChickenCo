@@ -100,11 +100,22 @@ Also on the pick screen:
 - Can add notes to orders, stores and trucks.
 
 **Management**
-- **Import from VIP:** choose the file VIP saved (the IN005 pick list as text, or a
-  CSV) or paste it. Every order is shown first, with orders already on today's
-  trucks and new item codes flagged, and nothing is created until **Import**.
-  *This was built from a photo of the printed sheet and will be matched to VIP's
-  real export files once samples arrive.*
+- **Import from VIP:** choose VIP's **order record** export (the Excel .xlsx file; a CSV
+  with the same columns works too). It covers every warehouse; only loads whose **middle
+  digit is ours** (0, so 101–106, 201–206…) are used. If the file has more than one
+  delivery day, pick the day to import. Every order is shown first, by truck and stop,
+  and nothing is created until **Import**.
+  - **One pick list per store per load**, even when VIP split it into separate beer,
+    non-alcohol and wine invoices. Each line keeps its invoice # for billing.
+  - **Load # → truck:** the last digit is the truck (201 is Truck 1, 206 is Truck 6).
+    The first digit is the delivery day.
+  - **Picked only:** only lines VIP marks *Picked* with a positive quantity become
+    picks. Returns, credits and price corrections are left out, along with tax and
+    service charges ("MISC SER CHG"), empties and voided lines.
+  - **Notes:** invoice messages ("cooler take to east 80") become notes on the order.
+  - **Stock-outs:** a regular invoice line VIP didn't pick comes in marked *OUT.
+  - **Barcodes:** UPCs in the file are added automatically, so scanning works right away.
+  - **No doubles:** importing the same file twice doesn't create duplicate orders.
 - **Manage orders:** type orders in by hand when needed, and edit, assign, reopen
   or delete them. Each order also has a history of every scan and change.
 - **Items & barcodes:** add items, scan a case barcode to link it to an item,
@@ -227,8 +238,6 @@ When Safari asks for camera access, tap **Allow**.
 
 ## Not done yet
 
-- **Matching the VIP import to the real export files** (waiting on samples), and a
-  product list import with UPCs.
 - **Kegs and MISC lines.** These can be entered and checked off by hand, but have
   no special handling yet.
 
@@ -245,7 +254,8 @@ server/            Node.js + Express API, SQLite via node:sqlite
   barcode.js       UPC / EAN / ITF-14 normalisation to GTIN-14
   days.js          work days: totals, top sellers, end-of-day notification
   rates.js         pick rate (cases per active hour)
-  vip.js           reads VIP pick lists (IN005 text, CSV)
+  vip.js           reads VIP exports (order record .xlsx/.csv, IN005 text)
+  xlsx.js          small built-in .xlsx reader
   backup.js        nightly backups, local and S3-compatible
   version.js       app version, for "new version available"
 public/js/wedge.js tells ring-scanner input apart from typing

@@ -23,7 +23,25 @@ async function request(method, url, body) {
   return data;
 }
 
+// Sends a file's raw bytes (e.g. the VIP .xlsx) and returns the JSON answer.
+async function upload(url, file) {
+  let res;
+  try {
+    res = await fetch(`/api${url}`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || '') },
+      body: file,
+    });
+  } catch {
+    throw new ApiError(0, 'No connection. Check Wi-Fi or signal and try again.');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, data.error || `Upload failed (${res.status})`);
+  return data;
+}
+
 export const api = {
+  upload,
   get: (url) => request('GET', url),
   post: (url, body = {}) => request('POST', url, body),
   put: (url, body = {}) => request('PUT', url, body),

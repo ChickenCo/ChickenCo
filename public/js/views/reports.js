@@ -39,7 +39,7 @@ export async function reportsView(ctx) {
           <tbody>${rows.map((r) => `<tr>
             <td>#${esc(r.code)} ${esc(r.description)}</td><td class="num"><b>${fmtNum(r.cases)}</b></td><td class="num">${r.times}</td>
             <td class="num">${r.days}</td><td class="num">${r.stores}</td><td class="num">${r.vip_cases || ''}</td><td class="num">${r.cant_find || ''}</td>
-            <td>${fmtTime(r.last_at)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No outs in this period.</td></tr>'}</tbody>
+            <td>${fmtTime(r.last_at)}</td></tr>`).join('') || '<tr><td colspan="9" class="muted">No outs in this period.</td></tr>'}</tbody>
         </table></div>`;
       return;
     }
@@ -64,9 +64,9 @@ export async function reportsView(ctx) {
       out.innerHTML = `
         <p class="muted small">${rows.length} out line${rows.length === 1 ? '' : 's'} · ${units} total short</p>
         <div class="table-wrap"><table>
-          <thead><tr><th>When</th><th>Truck / Stop</th><th>Store</th><th>Item</th><th>Short</th><th>Reason</th><th>Marked by</th><th>Checked by</th></tr></thead>
+          <thead><tr><th>When</th><th>Truck / Stop</th><th>Store</th><th>Invoice</th><th>Item</th><th>Short</th><th>Reason</th><th>Marked by</th><th>Checked by</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
-            <td>${fmtTime(r.out_at)}</td><td>${r.truck ?? '?'} / ${esc(r.stop)}</td><td>${esc(r.store)}</td>
+            <td>${fmtTime(r.out_at)}</td><td>${r.truck ?? '?'} / ${esc(r.stop)}</td><td>${esc(r.store)}</td><td>${esc(r.invoice_no || '')}</td>
             <td>#${esc(r.code)} ${esc(r.description)}</td><td class="num">${r.out_qty}/${r.qty}</td><td>${esc(r.reason_label)}</td>
             <td>${r.out_reason === 'vip' ? 'VIP sheet' : esc(r.out_by_name || '')}</td>
             <td>${r.out_status === 'confirmed' ? `✓ ${esc(r.reviewed_by_name || '')}` : '<span class="text-warn">not yet</span>'}</td>
@@ -125,8 +125,8 @@ export async function reportsView(ctx) {
     const stamp = `${document.getElementById('rFrom').value}_to_${document.getElementById('rTo').value}`;
     if (tab === 'outs') {
       downloadCsv(`outs_${stamp}.csv`, [
-        ['Marked out', 'Truck', 'Load', 'Stop', 'Store', 'Order date', 'Code', 'Description', 'Ordered', 'Short', 'Reason', 'Marked by', 'Status', 'Checked by'],
-        ...rows.map((r) => [new Date(r.out_at || 0).toLocaleString(), r.truck, r.load_no, r.stop, r.store, r.order_date, r.code, r.description,
+        ['Marked out', 'Truck', 'Load', 'Stop', 'Store', 'Account', 'Invoice', 'Order date', 'Code', 'Description', 'Ordered', 'Short', 'Reason', 'Marked by', 'Status', 'Checked by'],
+        ...rows.map((r) => [new Date(r.out_at || 0).toLocaleString(), r.truck, r.load_no, r.stop, r.store, r.account_no, r.invoice_no || '', r.order_date, r.code, r.description,
           r.qty, r.out_qty, r.reason_label, r.out_reason === 'vip' ? 'VIP sheet' : r.out_by_name || '', r.out_status === 'confirmed' ? 'Confirmed' : 'Not checked', r.reviewed_by_name || '']),
       ]);
     } else {

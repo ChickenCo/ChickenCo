@@ -22,7 +22,7 @@ export async function trucksView(ctx) {
             <div class="truck-num">${t.truck}</div>
             <div class="truck-body">
               <strong>Truck ${t.truck}</strong>
-              <span class="muted small">Load #${esc(t.load)}</span>
+              <span class="muted small">${t.loads?.length ? `Load #${t.loads.map(esc).join(', ')}` : 'No load yet'}</span>
               ${t.orders ? `
                 <div class="progress"><span style="width:${pct(t.unitsDone, t.units)}%"></span></div>
                 <span class="small">${t.done}/${t.orders} orders done${t.review ? ` · <b class="text-danger">${t.review} to review</b>` : ''}</span>`
@@ -125,7 +125,7 @@ export async function truckView(ctx, truck) {
     }
     const openCount = orders.filter((o) => o.status === 'open').length;
     view.innerHTML = `
-      ${known ? `<p class="muted small">Load #${esc(known.load)} · ${orders.length} order${orders.length === 1 ? '' : 's'}</p>` : ''}
+      ${known ? `<p class="muted small">${[...new Set(orders.map((o) => o.load_no))].length ? `Load #${[...new Set(orders.map((o) => o.load_no))].map(esc).join(', ')} · ` : ''}${orders.length} order${orders.length === 1 ? '' : 's'}</p>` : ''}
       ${known ? notesHtml(notes, ctx, { title: 'Loading notes' }) : ''}
       <nav class="tabs">
         <a href="#" data-act="mode" data-arg="pick" class="${loadOrder ? '' : 'active'}">Pick order</a>

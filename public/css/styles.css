@@ -321,6 +321,10 @@ tr.click:active td { background: var(--bg); }
 
 /* Import */
 .file-btn { margin-bottom: 12px; }
+.narrow-field input { max-width: 120px; }
+.day-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 420px) { .day-pick { grid-template-columns: 1fr; } }
+.day-pick .btn { flex-direction: column; align-items: flex-start; padding: 10px 14px; text-align: left; gap: 2px; }
 .import-order.skipped { opacity: .55; }
 .import-head { align-items: flex-start; font-size: 1rem; }
 .import-head input { margin-top: 2px; }
