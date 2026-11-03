@@ -12,11 +12,21 @@ const SKIP_LABEL = {
   empties: 'empties and credits',
 };
 
+// Delivery date for trucks loaded today, as MM/DD/YY (VIP's invoice date).
+function nextDeliveryDate(now = new Date()) {
+  const d = new Date(now);
+  const add = { 5: 3, 6: 2, 0: 1 }[d.getDay()] ?? 1; // Fri→Mon, Sat→Mon, Sun→Mon, else tomorrow
+  d.setDate(d.getDate() + add);
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(2)}`;
+}
+const dueLabel = (now = new Date()) => ([5, 6, 0].includes(now.getDay()) ? 'Monday' : 'tomorrow');
+
 export async function importView(ctx) {
   ctx.chrome('Import from VIP', '#/orders');
   let preview = null;
   let picked = new Set();
   let dayFilter = null;
+  let dueMissing = null;
 
   function renderStart(message = '') {
     view.innerHTML = `
@@ -42,8 +52,12 @@ export async function importView(ctx) {
 
   function show(p) {
     preview = p;
-    // Default: the latest delivery day in the file, minus anything already imported.
-    dayFilter = p.days?.length ? p.days.at(-1).day_no : null;
+    // Trucks loaded today are due tomorrow; on Friday (and the weekend) they're due Monday.
+    // Default to that delivery day if it's in the file, otherwise the latest day in it.
+    const due = nextDeliveryDate();
+    const match = p.days?.find((d) => d.date === due);
+    dayFilter = match ? match.day_no : p.days?.length ? p.days.at(-1).day_no : null;
+    dueMissing = p.days?.length && !match ? due : null;
     selectDay();
     renderPreview();
   }
@@ -66,8 +80,10 @@ export async function importView(ctx) {
           <button class="btn ${dayFilter === d.day_no ? 'btn-primary' : 'btn-ghost'}" data-act="day" data-arg="${d.day_no}">
             <b>${esc(d.dayName || `Day ${d.day_no}`)} ${esc(d.date)}</b><span class="small">Loads ${esc(d.loads[0])}–${esc(d.loads.at(-1))} · ${d.orders} orders · ${fmtNum(d.cases)} cs</span>
           </button>`).join('')}</div>
-        <p class="muted small">The file has more than one delivery day. Import one day at a time so it lines up with the trucks you're loading.</p>
+        <p class="muted small">Trucks loaded today are due ${esc(dueLabel())}. Import one delivery day at a time.</p>
+        ${dueMissing ? `<p class="small text-warn">This file has no orders due ${esc(dueLabel())} (${esc(dueMissing)}). Check that it's the latest export from VIP.</p>` : ''}
       </section>` : ''}
+      ${dueMissing && !(days?.length > 1) ? `<div class="banner warn">This file has no orders due ${esc(dueLabel())} (${esc(dueMissing)}). Check that it's the latest export from VIP.</div>` : ''}
       <p class="muted small">${shown.length} order${shown.length === 1 ? '' : 's'}${skippedTotal ? ` · left out: ${Object.entries(skipped).filter(([, n]) => n).map(([k, n]) => `${fmtNum(n)} ${SKIP_LABEL[k] || k}`).join(', ')}` : ''}.
         ${barcodes?.total ? `<br>${fmtNum(barcodes.new)} new barcode${barcodes.new === 1 ? '' : 's'} from the UPC column will be added${barcodes.conflicts ? ` (${barcodes.conflicts} skipped: already linked to a different item)` : ''}.` : ''}</p>
       ${[...byTruck.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true })).map(([truck, list]) => `

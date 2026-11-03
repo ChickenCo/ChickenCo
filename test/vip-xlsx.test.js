@@ -64,6 +64,8 @@ const ROWS = [HEAD,
   row({ ...base, 'Retailer ID': '01001', DBA: 'TEST MART #1', 'Product ID': '00547', 'Product Description': 'NAT LT DAD 16OZ 4/6', 'Order Quantity': -1, 'Invoice Number': 900001, 'Unit of Measure': 'Case Beer', 'Load #': '201', 'Stop Number': 8, 'Picked?': '0' }),
   // A stock-out: regular invoice line VIP didn't pick.
   row({ ...base, 'Retailer ID': '01001', DBA: 'TEST MART #1', 'Product ID': '01172', 'Product Description': 'NEW BELGIUM VDR JF IPA 4/6', 'Order Quantity': 1, 'Invoice Number': 900001, 'Unit of Measure': 'Case Beer', 'Load #': '201', 'Stop Number': 8, 'Picked?': '0' }),
+  // The same item again without *OUT: it still needs to be picked.
+  row({ ...base, 'Retailer ID': '01001', DBA: 'TEST MART #1', 'Product ID': '01172', 'Product Description': 'NEW BELGIUM VDR JF IPA 4/6', 'Order Quantity': 2, 'Invoice Number': 900002, 'Unit of Measure': 'Case Beer', 'Load #': '201', 'Stop Number': 8 }),
   // A pricing correction (not picked, misc charges) and a voided line: both left out.
   row({ ...base, 'Retailer ID': '01001', DBA: 'TEST MART #1', 'Product ID': '00735', 'Product Description': 'BUD LT 30/12 CAN', 'Order Quantity': 1, 'Invoice Number': 900003, 'Unit of Measure': 'Case Beer', 'Pricing Origin': 'Misc. Charges', 'Load #': '201', 'Stop Number': 8, 'Picked?': '0' }),
   row({ ...base, 'Retailer ID': '01001', DBA: 'TEST MART #1', 'Product ID': '00125', 'Product Description': 'BUD LN 4/6', 'Order Quantity': 3, 'Invoice Number': 900001, 'Unit of Measure': 'Case Beer', 'Line Voided?': 'Y', 'Load #': '201', 'Stop Number': 8 }),
@@ -87,7 +89,7 @@ test('turns the VIP order record into pick orders for our warehouse', () => {
   assert.equal(r.format, 'VIP order record');
   assert.deepEqual(r.skipped, { otherWarehouses: 1, voided: 1, returnsAndCredits: 2, tax: 1, empties: 0 });
   assert.deepEqual(r.days.map((d) => [d.day_no, d.dayName, d.date, d.loads.join(','), d.orders, d.cases]),
-    [['1', 'Monday', '11/02/26', '104', 1, 4], ['2', 'Tuesday', '11/03/26', '201,206', 2, 12]]);
+    [['1', 'Monday', '11/02/26', '104', 1, 4], ['2', 'Tuesday', '11/03/26', '201,206', 2, 14]]);
 
   const a = r.orders.find((o) => o.store === 'TEST MART #1');
   assert.equal(a.load_no, '201');
@@ -102,6 +104,7 @@ test('turns the VIP order record into pick orders for our warehouse', () => {
     ['00439', 2, 'CASES', false, '900001'],
     ['50001', 1, 'CASES', false, '900002'],
     ['01172', 1, 'CASES', true, '900001'],
+    ['01172', 2, 'CASES', false, '900002'],
   ]);
   const keg = r.orders.find((o) => o.store === 'TEST TAVERN');
   assert.deepEqual([keg.truck, keg.lines[0].unit], [6, 'KEGS']);
@@ -164,7 +167,7 @@ test('management uploads the file, imports one day, and re-importing is blocked'
   assert.equal(truck1[0].store, 'TEST MART #1');
   const order = await json('GET', `/orders/${truck1[0].id}`);
   assert.deepEqual(order.notes.map((n) => [n.text, n.user_id]), [['Trade 2 bud light 30s take to back cooler', null]]);
-  assert.equal(order.lines.find((l) => l.code === '01172').out_reason, 'vip');
+  assert.deepEqual(order.lines.filter((l) => l.code === '01172').map((l) => [l.qty, l.out_reason]), [[1, 'vip'], [2, null]]);
   assert.equal(order.lines.find((l) => l.code === '50001').invoice_no, '900002');
   const scan = await json('GET', '/barcodes/lookup?raw=18200530302');
   assert.equal(scan.item.code, '00735', 'scanning the case finds the item from the VIP UPC');

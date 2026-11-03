@@ -95,6 +95,14 @@ export async function pickView(ctx, id) {
   const remainingToPick = (l) => l.qty - l.picked;
   const lineById = (lid) => o.lines.find((l) => String(l.id) === String(lid));
   const todoLines = () => o.lines.filter((l) => l.picked + l.out_qty < l.qty);
+  // The same item can be on an order twice: once marked *OUT by VIP and once without.
+  // A scan goes to the line that still needs picking, and only to the *OUT line if that's all there is.
+  const lineForCode = (code) => {
+    const same = o.lines.filter((l) => l.code === code);
+    return same.find((l) => l.picked + l.out_qty < l.qty)
+      || same.find((l) => remainingToPick(l) > 0)
+      || same[0];
+  };
 
   function render() {
     ctx.chrome(`Stop ${o.stop || '—'}`, o.truck ? `#/truck/${o.truck}` : '#/');
@@ -289,7 +297,7 @@ export async function pickView(ctx, id) {
       // No signal: match against this order's barcodes saved on the phone.
       const gtin = normalizeBarcode(raw, format);
       const code = codes.get(gtin);
-      const line = code && o.lines.find((l) => l.code === code);
+      const line = code && lineForCode(code);
       return { gtin, display: raw, item: line ? { code: line.code, description: line.description } : null, offline: true };
     }
   }
@@ -304,8 +312,8 @@ export async function pickView(ctx, id) {
 
     // Typed item codes (e.g. 00439) work too.
     let line = found.item
-      ? o.lines.find((l) => l.code === found.item.code)
-      : o.lines.find((l) => l.code === String(raw).trim().toUpperCase());
+      ? lineForCode(found.item.code)
+      : lineForCode(String(raw).trim().toUpperCase());
 
     if (!found.item && !line) {
       feedback('error');

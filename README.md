@@ -102,8 +102,9 @@ Also on the pick screen:
 **Management**
 - **Import from VIP:** choose VIP's **order record** export (the Excel .xlsx file; a CSV
   with the same columns works too). It covers every warehouse; only loads whose **middle
-  digit is ours** (0, so 101–106, 201–206…) are used. If the file has more than one
-  delivery day, pick the day to import. Every order is shown first, by truck and stop,
+  digit is ours** (0, so 101–106, 201–206…) are used. Trucks loaded today are due
+  tomorrow (Friday's are due Monday), so the import picks that delivery day by default
+  and warns if the file doesn't have it. Another day can be chosen. Every order is shown first, by truck and stop,
   and nothing is created until **Import**.
   - **One pick list per store per load**, even when VIP split it into separate beer,
     non-alcohol and wine invoices. Each line keeps its invoice # for billing.
@@ -113,7 +114,9 @@ Also on the pick screen:
     picks. Returns, credits and price corrections are left out, along with tax and
     service charges ("MISC SER CHG"), empties and voided lines.
   - **Notes:** invoice messages ("cooler take to east 80") become notes on the order.
-  - **Stock-outs:** a regular invoice line VIP didn't pick comes in marked *OUT.
+  - **Stock-outs:** a regular invoice line VIP didn't pick comes in marked *OUT, as
+    before (it can still be picked if found). If the same item is also on the order
+    without *OUT, that line still needs picking, and scans go to it first.
   - **Barcodes:** UPCs in the file are added automatically, so scanning works right away.
   - **No doubles:** importing the same file twice doesn't create duplicate orders.
 - **Manage orders:** type orders in by hand when needed, and edit, assign, reopen
