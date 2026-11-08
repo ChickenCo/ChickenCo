@@ -30,6 +30,7 @@ function compute({ dayId, since, includeTests = false, now = Date.now() }) {
 
   let orderId = null;
   let active = null; // { user, last }
+  let pausedUser = null; // who was picking when the order was paused
   const advance = (at) => {
     if (!active) return;
     get(active.user).activeMs += Math.min(Math.max(0, at - active.last), MAX_GAP);
@@ -41,6 +42,7 @@ function compute({ dayId, since, includeTests = false, now = Date.now() }) {
       // Still being picked right now: count the time since the last scan (capped).
       if (orderId !== null && active) advance(now);
       active = null;
+      pausedUser = null;
       orderId = e.order_id;
     }
     const d = e.detail ? JSON.parse(e.detail) : {};
@@ -72,6 +74,16 @@ function compute({ dayId, since, includeTests = false, now = Date.now() }) {
         break;
       case 'out_cleared':
         if (active && active.user === e.user_id) advance(e.at);
+        break;
+      // Paused time (break, wrapping a pallet...) never counts against anyone's rate.
+      case 'paused':
+        advance(e.at);
+        pausedUser = active ? active.user : null;
+        active = null;
+        break;
+      case 'resumed':
+        if (pausedUser) active = { user: pausedUser, last: e.at };
+        pausedUser = null;
         break;
       case 'released':
       case 'submitted':

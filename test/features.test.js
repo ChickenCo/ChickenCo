@@ -95,9 +95,10 @@ test('scans saved offline keep the time they happened', async () => {
   const o = await order(4, '001', 'OFFLINE MART', [{ code: '00735', qty: 3 }]);
   await picker.post(`/orders/${o.id}/start`);
   const tenMinAgo = Date.now() - 10 * 60000;
-  await picker.post(`/orders/${o.id}/lines/${o.lines[0].id}/pick`, { picked: 2, at: tenMinAgo });
+  const ok = { username: 'bboss', pin: '3333' }; // no barcode for this item here, so a supervisor signs off
+  await picker.post(`/orders/${o.id}/lines/${o.lines[0].id}/pick`, { picked: 2, at: tenMinAgo, override: ok });
   assert.equal(one("SELECT at FROM events WHERE order_id = ? AND type = 'picked'", o.id).at, tenMinAgo);
-  await picker.post(`/orders/${o.id}/lines/${o.lines[0].id}/pick`, { picked: 3, at: Date.now() + 86400000 });
+  await picker.post(`/orders/${o.id}/lines/${o.lines[0].id}/pick`, { picked: 3, at: Date.now() + 86400000, override: ok });
   assert.ok(one("SELECT MAX(at) at FROM events WHERE order_id = ? AND type = 'picked'", o.id).at <= Date.now(), 'future times are not trusted');
   const codes = await picker.get(`/orders/${o.id}/barcodes`);
   assert.ok(Array.isArray(codes));

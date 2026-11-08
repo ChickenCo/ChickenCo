@@ -28,7 +28,8 @@ function validPin(pin) {
 
 const publicUser = (u) => u && { id: u.id, username: u.username, name: u.name, role: u.role, active: !!u.active };
 
-function login(username, pin) {
+// Checks a username + PIN (with the wrong-PIN lockout). Returns { user } or { error }.
+function verify(username, pin) {
   const u = one('SELECT * FROM users WHERE username = ?', String(username || '').trim());
   const now = Date.now();
   if (!u || !u.active) return { error: 'Wrong username or PIN' };
@@ -43,6 +44,14 @@ function login(username, pin) {
     return { error: 'Wrong username or PIN' };
   }
   run('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', u.id);
+  return { user: u };
+}
+
+function login(username, pin) {
+  const v = verify(username, pin);
+  if (v.error) return v;
+  const u = v.user;
+  const now = Date.now();
   const token = crypto.randomBytes(32).toString('base64url');
   run('INSERT INTO sessions (token, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)', token, u.id, now, now);
   return { token, user: publicUser(u) };
@@ -98,6 +107,6 @@ function ensureAdmin() {
 }
 
 module.exports = {
-  ROLES, RANK, hashPin, checkPin, validPin, login, loadUser, requireRole, atLeast,
+  ROLES, RANK, hashPin, checkPin, validPin, login, verify, loadUser, requireRole, atLeast,
   setSessionCookie, clearSessionCookie, publicUser, ensureAdmin,
 };

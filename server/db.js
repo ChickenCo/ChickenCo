@@ -179,6 +179,25 @@ if (!all('PRAGMA table_info(order_lines)').some((c) => c.name === 'invoice_no'))
 db.exec('CREATE INDEX IF NOT EXISTS orders_vip_ref ON orders(vip_ref)');
 // Small orders that ride on a cart instead of a pallet show "Cart" instead of a stop number.
 if (!all('PRAGMA table_info(orders)').some((c) => c.name === 'is_cart')) db.exec('ALTER TABLE orders ADD COLUMN is_cart INTEGER NOT NULL DEFAULT 0');
+// Pick time: picking_since marks the current stretch of picking; pick_ms adds up finished stretches;
+// paused_ms is pause time in the current stretch, paused_total all pause time for the order.
+for (const [col, type] of [['paused_at', 'INTEGER'], ['pause_reason', 'TEXT'], ['paused_ms', 'INTEGER NOT NULL DEFAULT 0'],
+  ['paused_total', 'INTEGER NOT NULL DEFAULT 0'], ['picking_since', 'INTEGER'], ['pick_ms', 'INTEGER']]) {
+  if (!all('PRAGMA table_info(orders)').some((c) => c.name === col)) db.exec(`ALTER TABLE orders ADD COLUMN ${col} ${type}`);
+}
+// Picks added without a scan wait here for a supervisor.
+db.exec(`CREATE TABLE IF NOT EXISTS pick_requests (
+  id INTEGER PRIMARY KEY,
+  order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  line_id INTEGER NOT NULL REFERENCES order_lines(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  from_qty INTEGER NOT NULL,
+  to_qty INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied')),
+  decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  decided_at INTEGER,
+  created_at INTEGER NOT NULL
+)`);
 const loose = one(`SELECT COUNT(*) n, MIN(created_at) first, MAX(completed_at) last,
   SUM(status != 'done') open FROM orders WHERE day_id IS NULL`);
 if (loose.n) {

@@ -78,6 +78,7 @@ test('the day ends when every truck is done, with totals, top sellers and most o
   await admin.post('/users', { name: 'Day Picker', username: 'daypicker', role: 'picker', pin: '2222' });
   await admin.post('/users', { name: 'Day Boss', username: 'dayboss', role: 'supervisor', pin: '3333' });
   const picker = await signIn('daypicker', '2222');
+  const OK = { username: 'dayboss', pin: '3333' }; // these items have no barcodes here, so a supervisor signs off
   const boss = await signIn('dayboss', '3333');
 
   const a = await admin.post('/orders', { truck: 1, stop: '001', store: 'A MART', lines: [
@@ -94,7 +95,7 @@ test('the day ends when every truck is done, with totals, top sellers and most o
 
   // Order A: everything picked.
   let o = await picker.post(`/orders/${a.id}/start`);
-  for (const l of o.lines) o = await picker.post(`/orders/${a.id}/lines/${l.id}/pick`, { picked: l.qty });
+  for (const l of o.lines) o = await picker.post(`/orders/${a.id}/lines/${l.id}/pick`, { picked: l.qty, override: OK });
   await picker.post(`/orders/${a.id}/submit`);
   home = await picker.get('/trucks');
   assert.equal(home.day.ended_at, null, 'truck 2 still has an order');
@@ -102,8 +103,8 @@ test('the day ends when every truck is done, with totals, top sellers and most o
   // Order B: BUD LN short 2, supervisor confirms and approves -> day ends.
   o = await picker.post(`/orders/${b.id}/start`);
   const ln = o.lines.find((l) => l.code === '00125');
-  o = await picker.post(`/orders/${b.id}/lines/${o.lines.find((l) => l.code === '00735').id}/pick`, { picked: 6 });
-  o = await picker.post(`/orders/${b.id}/lines/${ln.id}/pick`, { picked: 1 });
+  o = await picker.post(`/orders/${b.id}/lines/${o.lines.find((l) => l.code === '00735').id}/pick`, { picked: 6, override: OK });
+  o = await picker.post(`/orders/${b.id}/lines/${ln.id}/pick`, { picked: 1, override: OK });
   o = await picker.post(`/orders/${b.id}/lines/${ln.id}/out`, { qty: 2, reason: 'out_of_stock' });
   await picker.post(`/orders/${b.id}/submit`);
   await boss.post(`/orders/${b.id}/lines/${ln.id}/confirm-out`);

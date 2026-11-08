@@ -101,7 +101,7 @@ test("Chuck's Carry Out test run", async (t) => {
       const scan = await picker.get(`/barcodes/lookup?raw=${demoUpc(s.code)}&format=UPCA`);
       assert.equal(scan.item.code, s.code, `barcode for ${s.code}`);
       const line = order.lines.find((l) => l.code === scan.item.code);
-      order = await picker.post(`/orders/${order.id}/lines/${line.id}/pick`, { picked: line.qty, via: 'scan' });
+      order = await picker.post(`/orders/${order.id}/lines/${line.id}/pick`, { picked: line.qty, via: 'scan', barcode: demoUpc(s.code) });
     }
     assert.equal(order.units_picked, 113 - 2 - 1);
   });

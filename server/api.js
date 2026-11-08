@@ -25,9 +25,9 @@ let version = Date.now();
 const changed = () => { version += 1; };
 
 class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
-const fail = (status, message) => { throw new HttpError(status, message); };
+const fail = (status, message, code) => { throw new HttpError(status, message, code); };
 
 // Wraps handlers so thrown errors become JSON responses.
 const h = (fn) => async (req, res) => {
@@ -36,7 +36,7 @@ const h = (fn) => async (req, res) => {
     if (!res.headersSent) res.json(out ?? { ok: true });
   } catch (err) {
     if (!(err instanceof HttpError)) console.error(err);
-    res.status(err.status || 500).json({ error: err.status ? err.message : 'Something went wrong' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Something went wrong', ...(err.code && { code: err.code }) });
   }
 };
 
@@ -77,6 +77,13 @@ const DEFAULT_PRIORITY = [
   { label: '12 packs', match: ['2/12', '12/12', '12 PK', '12PK'] },
 ];
 const pickPriority = () => getSetting('pick_priority', DEFAULT_PRIORITY);
+// The newer, hand-built priority: an ordered list of headings and specific items (by item code).
+const pickPriorityList = () => {
+  const list = getSetting('pick_priority_list', null);
+  if (!list) return null;
+  return list.map((e) => (e.type === 'item'
+    ? { ...e, description: one('SELECT description FROM items WHERE code = ?', e.code)?.description || '' } : e));
+};
 function truckForLoad(load) {
   const s = String(load ?? '').trim();
   const t = trucks().find((x) => x.load === s);
@@ -131,6 +138,7 @@ function orderDetail(id) {
     WHERE (n.scope = 'order' AND n.order_id = ?) OR (n.scope = 'store' AND n.store_key = ?)
       OR (n.scope = 'truck' AND n.truck = ? AND (n.day_id IS NULL OR n.day_id = ?))
     ORDER BY CASE n.scope WHEN 'order' THEN 0 WHEN 'store' THEN 1 ELSE 2 END, n.created_at`, o.id, storeKey(o), o.truck ?? -1, o.day_id ?? -1);
+  o.requests = all("SELECT id, line_id, from_qty, to_qty, created_at FROM pick_requests WHERE order_id = ? AND status = 'pending'", o.id);
   return o;
 }
 
@@ -150,6 +158,56 @@ function assertCanPick(req, order) {
       ? `${order.picker_name} is picking this order`
       : 'Tap "Start picking" first');
   }
+}
+
+// ---------- pick time ----------
+// A stretch of picking starts when someone takes the order and ends when it's sent on or put down.
+function startStretch(orderId, at = Date.now()) {
+  run('UPDATE orders SET picking_since = COALESCE(picking_since, ?), paused_ms = 0, paused_at = NULL, pause_reason = NULL WHERE id = ?', at, orderId);
+}
+function endStretch(orderId, at = Date.now()) {
+  const o = one('SELECT picking_since, paused_at, paused_ms, paused_total, pick_ms FROM orders WHERE id = ?', orderId);
+  if (!o || !o.picking_since) return;
+  const pausedNow = o.paused_at ? at - o.paused_at : 0;
+  const paused = o.paused_ms + pausedNow;
+  run(`UPDATE orders SET pick_ms = ?, paused_total = ?, picking_since = NULL, paused_ms = 0, paused_at = NULL, pause_reason = NULL
+    WHERE id = ?`, (o.pick_ms || 0) + Math.max(0, at - o.picking_since - paused), o.paused_total + paused, orderId);
+}
+
+function assertNotPaused(order) {
+  if (order.paused_at) fail(409, `Paused (${order.pause_reason}). Tap Resume first.`, 'paused');
+}
+
+// Pickers add to a pick by scanning. Anything else that raises a count needs a supervisor.
+function pickApproval(req, order, line, picked) {
+  if (picked <= line.picked || atLeast(req.user, 'supervisor')) return null;
+  const via = str(req.body.via, 10);
+  if (via === 'scan' && req.body.barcode) {
+    const found = barcodeLookup(req.body.barcode, req.body.format);
+    if (found.item && found.item.code === line.code) return null;
+  }
+  // Undoing your own last change on this line is allowed.
+  if (via === 'undo') {
+    const last = one("SELECT detail FROM events WHERE order_id = ? AND user_id = ? AND type = 'picked' ORDER BY id DESC LIMIT 1", order.id, req.user.id);
+    const d = last && JSON.parse(last.detail || '{}');
+    if (d && d.code === line.code && d.to === line.picked && d.from === picked) return null;
+  }
+  const o = req.body.override;
+  if (o && o.username) {
+    const v = auth.verify(o.username, o.pin);
+    if (v.error) fail(403, `Supervisor sign-off failed: ${v.error}`, 'bad_override');
+    if (!atLeast(v.user, 'supervisor')) fail(403, `${v.user.name} isn't a supervisor`, 'bad_override');
+    return v.user;
+  }
+  fail(403, 'Scan the item to add it. Adding without a scan needs a supervisor.', 'needs_approval');
+}
+
+function applyPick(order, line, picked, userId, detail, at = Date.now()) {
+  // Picking an item that was marked out reduces (or clears) the out.
+  const outQty = Math.min(line.out_qty, line.qty - picked);
+  run(`UPDATE order_lines SET picked = ?, out_qty = ?, out_reason = CASE WHEN ? > 0 THEN out_reason END,
+       out_status = CASE WHEN ? > 0 THEN out_status END WHERE id = ?`, picked, outQty, outQty, outQty, line.id);
+  logEvent(order.id, userId, 'picked', { code: line.code, from: line.picked, to: picked, ...detail }, at);
 }
 
 // ---------- auth ----------
@@ -184,6 +242,8 @@ api.get('/me', h((req) => ({
   warehouseDigit: warehouseDigit(),
   kegDays: kegDays(),
   pickPriority: pickPriority(),
+  pickPriorityList: pickPriorityList(),
+  pauseReasons: pauseReasons(),
   vapidKey: push.publicKey(),
   version,
   appVersion: APP_VERSION,
@@ -198,6 +258,7 @@ api.get('/ping', h((req) => ({
   version,
   appVersion: APP_VERSION,
   pinRequests: atLeast(req.user, 'admin') ? one('SELECT COUNT(*) n FROM pin_requests WHERE resolved_at IS NULL').n : 0,
+  approvals: atLeast(req.user, 'supervisor') ? one("SELECT COUNT(*) n FROM pick_requests WHERE status = 'pending'").n : 0,
   review: atLeast(req.user, 'supervisor') ? one("SELECT COUNT(*) n FROM orders WHERE status = 'review'").n : 0,
   pendingBarcodes: atLeast(req.user, 'supervisor') ? one("SELECT COUNT(*) n FROM item_barcodes WHERE status = 'pending'").n : 0,
 })));
@@ -483,6 +544,7 @@ api.post('/orders/:id/start', h((req) => {
   if (order.status !== 'picking') {
     run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?",
       req.user.id, Date.now(), order.id);
+    startStretch(order.id);
     logEvent(order.id, req.user.id, 'started');
     changed();
   }
@@ -493,6 +555,7 @@ api.post('/orders/:id/release', h((req) => {
   const order = getOrder(req.params.id);
   if (order.status !== 'picking') fail(409, 'This order is not being picked');
   if (order.picker_id !== req.user.id && !atLeast(req.user, 'supervisor')) fail(403, 'Only the picker or a supervisor can do that');
+  endStretch(order.id);
   run("UPDATE orders SET status = 'open', picker_id = NULL WHERE id = ?", order.id);
   logEvent(order.id, req.user.id, 'released');
   changed();
@@ -504,8 +567,10 @@ api.post('/orders/:id/assign', requireRole('supervisor'), h((req) => {
   if (order.status === 'done' || order.status === 'review') fail(409, 'Only open or in-progress orders can be assigned');
   const picker = one('SELECT * FROM users WHERE id = ? AND active = 1', int(req.body.userId));
   if (!picker || !canPick(picker)) fail(400, 'Choose an employee who picks');
+  if (order.picker_id !== picker.id) endStretch(order.id);
   run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?",
     picker.id, Date.now(), order.id);
+  startStretch(order.id);
   logEvent(order.id, req.user.id, 'assigned', { to: picker.name, toId: picker.id });
   push.notifyUser(picker.id, { title: 'Order assigned to you', body: `Truck ${order.truck ?? '?'} · ${stopLabel(order)} · ${order.store}`, url: `/#/order/${order.id}` });
   changed();
@@ -517,13 +582,14 @@ api.post('/orders/:id/lines/:lineId/pick', h((req) => {
   const order = getOrder(req.params.id);
   assertCanPick(req, order);
   const line = getLine(order, req.params.lineId);
+  assertNotPaused(order);
   const picked = int(req.body.picked);
   if (!(picked >= 0) || picked > line.qty) fail(400, `Quantity must be between 0 and ${line.qty}`);
-  // Picking an item that was marked out reduces (or clears) the out.
-  const outQty = Math.min(line.out_qty, line.qty - picked);
-  run(`UPDATE order_lines SET picked = ?, out_qty = ?, out_reason = CASE WHEN ? > 0 THEN out_reason END,
-       out_status = CASE WHEN ? > 0 THEN out_status END WHERE id = ?`, picked, outQty, outQty, outQty, line.id);
-  logEvent(order.id, req.user.id, 'picked', { code: line.code, from: line.picked, to: picked, via: str(req.body.via, 10) || 'manual' }, scanTime(req));
+  const approver = pickApproval(req, order, line, picked);
+  applyPick(order, line, picked, req.user.id, {
+    via: str(req.body.via, 10) || 'manual', ...(approver && { approvedBy: approver.name, approvedById: approver.id }),
+  }, scanTime(req));
+  run("UPDATE pick_requests SET status = 'denied', decided_at = ? WHERE line_id = ? AND status = 'pending' AND to_qty <= ?", Date.now(), line.id, picked);
   changed();
   return orderDetail(order.id);
 }));
@@ -531,6 +597,7 @@ api.post('/orders/:id/lines/:lineId/pick', h((req) => {
 api.post('/orders/:id/lines/:lineId/out', h((req) => {
   const order = getOrder(req.params.id);
   assertCanPick(req, order);
+  assertNotPaused(order);
   const line = getLine(order, req.params.lineId);
   const reason = str(req.body.reason);
   // 'vip' is only accepted when undoing a scan that had cleared a VIP *OUT.
@@ -559,9 +626,11 @@ api.post('/orders/:id/lines/:lineId/clear-out', h((req) => {
 api.post('/orders/:id/submit', h((req) => {
   const order = orderDetail(req.params.id);
   assertCanPick(req, order);
+  assertNotPaused(order);
   const unfinished = order.lines.filter((l) => l.picked + l.out_qty < l.qty);
   if (unfinished.length) fail(400, `${unfinished.length} item${unfinished.length === 1 ? ' is' : 's are'} not picked or marked out yet`);
   const now = Date.now();
+  endStretch(order.id, now);
   const needsReview = order.lines.some((l) => l.out_qty > 0 && l.out_status !== 'confirmed');
   if (needsReview) {
     run("UPDATE orders SET status = 'review', submitted_at = ? WHERE id = ?", now, order.id);
@@ -609,6 +678,7 @@ api.post('/trucks/:truck/next', h((req) => {
       ORDER BY is_cart, CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, ...loads);
     if (!o) return null;
     run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?", req.user.id, Date.now(), o.id);
+    startStretch(o.id);
     logEvent(o.id, req.user.id, 'started');
     return o.id;
   });
@@ -680,7 +750,8 @@ api.get('/floor', requireRole('supervisor'), h(() => {
         userId: u.id, name: u.name, role: u.role, lastAt: lastBy.get(u.id) || null,
         rate: r?.rate ?? null, cases: r?.cases ?? 0,
         order: current && { id: current.id, truck: current.truck, stop: current.stop, is_cart: current.is_cart, store: current.store,
-          units: current.units, done: current.units_picked + current.units_out, others: holding.length - 1 },
+          units: current.units, done: current.units_picked + current.units_out, others: holding.length - 1,
+          paused_at: current.paused_at, pause_reason: current.pause_reason },
       };
     })
     // Pickers always show; others only when they've picked today.
@@ -707,6 +778,96 @@ api.post('/pin-requests/:id/dismiss', requireRole('admin'), h((req) => {
   run('UPDATE pin_requests SET resolved_at = ? WHERE id = ?', Date.now(), int(req.params.id));
   changed();
 }));
+
+// ---------- pausing ----------
+const DEFAULT_PAUSE_REASONS = ['Break', 'Lunch', 'Wrapping pallet', 'Getting a pallet of items down', 'Restroom',
+  'Waiting on a forklift', 'Helping another picker', 'Equipment problem'];
+const pauseReasons = () => getSetting('pause_reasons', DEFAULT_PAUSE_REASONS);
+
+api.post('/orders/:id/pause', h((req) => {
+  const order = getOrder(req.params.id);
+  if (order.status !== 'picking') fail(409, 'Only an order being picked can be paused');
+  if (order.picker_id !== req.user.id && !atLeast(req.user, 'supervisor')) fail(403, 'Only the picker or a supervisor can pause this order');
+  if (order.paused_at) fail(409, 'Already paused');
+  const reason = str(req.body.reason, 80);
+  if (!reason) fail(400, 'Choose a reason');
+  if (!order.picking_since) startStretch(order.id);
+  run('UPDATE orders SET paused_at = ?, pause_reason = ? WHERE id = ?', Date.now(), reason, order.id);
+  logEvent(order.id, req.user.id, 'paused', { reason });
+  changed();
+  return orderDetail(order.id);
+}));
+
+api.post('/orders/:id/resume', h((req) => {
+  const order = getOrder(req.params.id);
+  if (!order.paused_at) return orderDetail(order.id);
+  if (order.picker_id !== req.user.id && !atLeast(req.user, 'supervisor')) fail(403, 'Only the picker or a supervisor can resume this order');
+  const ms = Date.now() - order.paused_at;
+  run('UPDATE orders SET paused_ms = paused_ms + ?, paused_at = NULL, pause_reason = NULL WHERE id = ?', ms, order.id);
+  logEvent(order.id, req.user.id, 'resumed', { reason: order.pause_reason, ms });
+  changed();
+  return orderDetail(order.id);
+}));
+
+api.put('/settings/pause-reasons', requireRole('admin'), h((req) => {
+  const list = [...new Set((Array.isArray(req.body.reasons) ? req.body.reasons : []).map((r) => str(r, 80)).filter(Boolean))].slice(0, 30);
+  if (!list.length) fail(400, 'Keep at least one reason');
+  setSetting('pause_reasons', list);
+  changed();
+  return { pauseReasons: pauseReasons() };
+}));
+
+// ---------- supervisor approval for picks without a scan ----------
+api.post('/orders/:id/lines/:lineId/request', h((req) => {
+  const order = getOrder(req.params.id);
+  assertCanPick(req, order);
+  assertNotPaused(order);
+  const line = getLine(order, req.params.lineId);
+  const picked = int(req.body.picked);
+  if (!(picked > line.picked) || picked > line.qty) fail(400, `Ask for between ${line.picked + 1} and ${line.qty}`);
+  run("UPDATE pick_requests SET status = 'denied', decided_at = ? WHERE line_id = ? AND status = 'pending'", Date.now(), line.id);
+  run('INSERT INTO pick_requests (order_id, line_id, user_id, from_qty, to_qty, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    order.id, line.id, req.user.id, line.picked, picked, Date.now());
+  logEvent(order.id, req.user.id, 'approval_requested', { code: line.code, from: line.picked, to: picked });
+  push.notifyRole('supervisor', {
+    title: 'Pick needs your OK',
+    body: `${req.user.name} wants to add ${picked - line.picked} × ${line.description} without a scan (Truck ${order.truck ?? '?'} · ${stopLabel(order)}).`,
+    url: '/#/approvals',
+  });
+  changed();
+  return orderDetail(order.id);
+}));
+
+api.get('/approvals', requireRole('supervisor'), h(() => all(`SELECT r.*, u.name AS picker_name, o.store, o.stop, o.is_cart, o.load_no,
+    l.description, l.code, l.qty, l.picked, l.unit
+  FROM pick_requests r JOIN orders o ON o.id = r.order_id JOIN order_lines l ON l.id = r.line_id
+  LEFT JOIN users u ON u.id = r.user_id WHERE r.status = 'pending' ORDER BY r.created_at`).map((r) => ({ ...r, truck: truckForLoad(r.load_no) }))));
+
+function decideRequest(req, approve) {
+  const r = one('SELECT * FROM pick_requests WHERE id = ?', int(req.params.id));
+  if (!r || r.status !== 'pending') fail(404, 'That request was already handled');
+  const order = getOrder(r.order_id);
+  const line = getLine(order, r.line_id);
+  if (approve) {
+    if (order.status === 'done') fail(409, 'This order is already finished');
+    // Add what was asked for on top of whatever has been picked since.
+    const picked = Math.min(line.qty, Math.max(line.picked, line.picked + (r.to_qty - r.from_qty)));
+    if (picked > line.picked) applyPick(order, line, picked, r.user_id, { via: 'approved', approvedBy: req.user.name, approvedById: req.user.id });
+  }
+  run('UPDATE pick_requests SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?', approve ? 'approved' : 'denied', req.user.id, Date.now(), r.id);
+  logEvent(order.id, req.user.id, approve ? 'approval_given' : 'approval_denied', { code: line.code, qty: r.to_qty - r.from_qty });
+  if (r.user_id) {
+    push.notifyUser(r.user_id, {
+      title: approve ? 'Pick approved' : 'Pick not approved',
+      body: `${line.description}: ${approve ? `${r.to_qty - r.from_qty} added` : 'scan it instead'} (${order.store}).`,
+      url: `/#/order/${order.id}`,
+    });
+  }
+  changed();
+  return { ok: true };
+}
+api.post('/approvals/:id/approve', requireRole('supervisor'), h((req) => decideRequest(req, true)));
+api.post('/approvals/:id/deny', requireRole('supervisor'), h((req) => decideRequest(req, false)));
 
 // ---------- supervisor review ----------
 api.get('/review', requireRole('supervisor'), h(() => all(`${ORDER_SELECT} WHERE o.status = 'review' ORDER BY o.submitted_at`).map(withTruck)));
@@ -748,6 +909,7 @@ api.post('/orders/:id/lines/:lineId/send-back', requireRole('supervisor'), h((re
     run('UPDATE order_lines SET out_qty = 0, out_reason = NULL, out_status = NULL, reviewed_by = ?, reviewed_at = ? WHERE id = ?',
       req.user.id, Date.now(), line.id);
     run("UPDATE orders SET status = 'picking' WHERE id = ?", order.id);
+    startStretch(order.id);
     logEvent(order.id, req.user.id, 'sent_back', { code: line.code, note: str(req.body.note), pickerId: order.picker_id, outBy: line.out_by, reason: line.out_reason });
   });
   if (order.picker_id) {
@@ -778,6 +940,7 @@ api.post('/orders/:id/reopen', requireRole('management'), h((req) => {
   const order = getOrder(req.params.id);
   run(`UPDATE orders SET status = CASE WHEN picker_id IS NULL THEN 'open' ELSE 'picking' END,
        completed_at = NULL, approved_by = NULL WHERE id = ?`, order.id);
+  if (order.picker_id) startStretch(order.id);
   run("UPDATE order_lines SET out_status = 'pending' WHERE order_id = ? AND out_qty > 0", order.id);
   logEvent(order.id, req.user.id, 'reopened');
   days.reopen(order.day_id);
@@ -982,6 +1145,17 @@ api.put('/settings/priority', requireRole('supervisor'), h((req) => {
   setSetting('pick_priority', rules);
   changed();
   return { pickPriority: pickPriority() };
+}));
+
+api.put('/settings/priority-list', requireRole('supervisor'), h((req) => {
+  const seen = new Set();
+  const list = (Array.isArray(req.body.list) ? req.body.list : []).slice(0, 500).map((e) => (e.type === 'heading'
+    ? { type: 'heading', label: str(e.label, 60) }
+    : { type: 'item', code: str(e.code, 40).toUpperCase() }))
+    .filter((e) => (e.type === 'heading' ? e.label : e.code && !seen.has(e.code) && seen.add(e.code)));
+  setSetting('pick_priority_list', list);
+  changed();
+  return { pickPriorityList: pickPriorityList() };
 }));
 
 api.put('/settings/kegs', requireRole('admin'), h((req) => {
