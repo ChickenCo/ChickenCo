@@ -26,7 +26,7 @@ export async function ordersView(ctx) {
       <li class="line" data-act="open" data-arg="${o.id}">
         <span class="line-main">
           <span class="line-name">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</span>
-          <span class="muted small">${esc(ctx.truckName(o.truck))} · ${o.is_cart ? '<b>Cart</b>' : esc(stopLabel(o))} · ${o.line_count} lines${o.order_date ? ` · ${esc(o.order_date)}` : ''}${o.picker_name ? ` · ${esc(o.picker_name)}` : ''}${['review', 'done'].includes(o.status) && pickTime(o) ? ` · ⏱ ${esc(pickTime(o))}` : ''}${o.paused_at ? ` · <b>⏸ ${esc(o.pause_reason)}</b>` : ''}</span>
+          <span class="muted small">${esc(ctx.truckName(o.truck))} · ${o.is_cart ? `<b>${esc(stopLabel(o))}</b>` : esc(stopLabel(o))} · ${o.line_count} lines${o.order_date ? ` · ${esc(o.order_date)}` : ''}${o.picker_name ? ` · ${esc(o.picker_name)}` : ''}${['review', 'done'].includes(o.status) && pickTime(o) ? ` · ⏱ ${esc(pickTime(o))}` : ''}${o.paused_at ? ` · <b>⏸ ${esc(o.pause_reason)}</b>` : ''}</span>
         </span>
         ${statusPill(o.status)}
       </li>`).join('') || '<li class="empty muted">No orders match.</li>';

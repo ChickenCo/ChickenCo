@@ -90,10 +90,10 @@ export async function importView(ctx) {
         ${barcodes?.total ? `<br>${fmtNum(barcodes.new)} new barcode${barcodes.new === 1 ? '' : 's'} from the UPC column will be added${barcodes.conflicts ? ` (${barcodes.conflicts} skipped: already linked to a different item)` : ''}.` : ''}</p>
       ${[...byTruck.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true })).map(([truck, list]) => `
         <h2 class="section-title">${truck === '?' ? 'Unknown truck' : `Truck ${truck}`} · ${list.length} order${list.length === 1 ? '' : 's'} · ${fmtNum(list.reduce((n, x) => n + x.o.cases, 0))} cases</h2>
-        ${list.map(({ o, i }) => `
+        ${list.sort((a, b) => (a.o.is_cart ? 1 : 0) - (b.o.is_cart ? 1 : 0) || (a.o.cart_no || 0) - (b.o.cart_no || 0) || String(a.o.stop).localeCompare(String(b.o.stop), undefined, { numeric: true })).map(({ o, i }) => `
           <section class="card import-order ${picked.has(i) ? '' : 'skipped'}">
             <label class="radio import-head"><input type="checkbox" data-i="${i}" ${picked.has(i) ? 'checked' : ''}>
-              <span><b>Stop ${esc(o.stop || '—')} · ${esc(o.store || 'No store name')}</b><br>
+              <span><b>${o.is_cart ? `<span class="cart-tag">CART ${o.cart_no || ''}</span>` : `Stop ${esc(o.stop || '—')}`} · ${esc(o.store || 'No store name')}</b>${o.vip_stop && o.vip_stop !== o.stop ? ` <span class="muted small">(VIP stop ${esc(o.vip_stop)})</span>` : ''}<br>
               <span class="muted small">Load #${esc(o.load_no)}${o.account_no ? ` · Acct ${esc(o.account_no)}` : ''} · ${o.lines.length} lines · ${fmtNum(o.cases)} cases${o.invoices?.length ? ` · Inv ${o.invoices.map(esc).join(', ')}` : ''}</span></span></label>
             ${o.duplicateOf ? "<p class=\"small text-warn\">Already imported. Unticked so it isn't added twice.</p>" : ''}
             ${o.truck ? '' : `<p class="small text-danger">Load #${esc(o.load_no)} isn't one of our trucks.</p>`}
@@ -130,7 +130,7 @@ export async function importView(ctx) {
       const r = await api.post('/orders/import', { orders, barcodes: preview.barcodes?.list || [], testRun });
       toast(`${r.created} ${testRun ? 'test ' : ''}order${r.created === 1 ? '' : 's'} imported${r.barcodesAdded ? `, ${r.barcodesAdded} barcodes added` : ''}${r.skipped.length ? `, ${r.skipped.length} skipped` : ''}`, r.skipped.length ? '' : 'ok');
       if (r.skipped.length) {
-        view.innerHTML = `<div class="banner warn"><b>Not imported:</b><ul class="plain">${r.skipped.map((s) => `<li>${esc(s.store || '?')} (Stop ${esc(s.stop || '?')}): ${esc(s.error)}</li>`).join('')}</ul></div>
+        view.innerHTML = `<div class="banner warn"><b>Not imported:</b><ul class="plain">${r.skipped.map((s) => `<li>${esc(s.store || '?')} (${s.is_cart ? `Cart ${esc(s.cart_no || '')}` : `Stop ${esc(s.stop || '?')}`}): ${esc(s.error)}</li>`).join('')}</ul></div>
           <a class="btn btn-primary" href="#/">Go to trucks</a>`;
       } else location.hash = '#/';
     } catch (err) { toast(err.message, 'error'); btn.disabled = false; }

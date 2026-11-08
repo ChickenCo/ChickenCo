@@ -1,6 +1,6 @@
 // Home: the Trucks menu, and the list of orders on one truck.
 import { api, qs } from '../api.js';
-import { esc, toast, statusPill, COMPANY, fmtTime, fmtNum, rateHtml, stopLabel, pickTime } from '../ui.js';
+import { esc, toast, confirmBox, statusPill, COMPANY, fmtTime, fmtNum, rateHtml, stopLabel, pickTime } from '../ui.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 import { removeTruckOrders } from './orders.js';
 
@@ -99,7 +99,7 @@ export async function truckView(ctx, truck) {
       return `
         <a class="card order-card status-${o.status}" href="#/${o.status === 'review' && ctx.can('supervisor') ? 'review' : 'order'}/${o.id}">
           <div class="row">
-            <span class="stop">${seq ? `<span class="load-seq">${seq}</span>` : ''}${o.is_cart ? '<span class="cart-tag">CART</span>' : `Stop ${esc(o.stop || '—')}`}</span>
+            <span class="stop">${seq ? `<span class="load-seq">${seq}</span>` : ''}${o.is_cart ? `<span class="cart-tag">CART${o.cart_no ? ` ${o.cart_no}` : ''}</span>` : `Stop ${esc(o.stop || '—')}`}</span>
             ${statusPill(o.status)}
           </div>
           <strong class="store">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</strong>
@@ -114,25 +114,41 @@ export async function truckView(ctx, truck) {
         </a>`;
     };
     const byStop = (a, b) => (parseInt(a.stop, 10) || 0) - (parseInt(b.stop, 10) || 0) || String(a.stop).localeCompare(String(b.stop));
+    // Orders sharing a cart are shown together under "Cart 2 · 3 stores · 31 cases".
+    const withCarts = (list, cardFn = (o) => card(o)) => {
+      const pallets = list.filter((o) => !o.is_cart);
+      const carts = new Map();
+      for (const o of list.filter((x) => x.is_cart)) {
+        const k = o.cart_no || 0;
+        if (!carts.has(k)) carts.set(k, []);
+        carts.get(k).push(o);
+      }
+      return pallets.map(cardFn).join('') + [...carts.entries()].sort((a, b) => (a[0] || 999) - (b[0] || 999)).map(([n, os]) => `
+        <h3 class="group-title cart-group">${n ? `Cart ${n}` : 'Carts'} · ${os.length} store${os.length === 1 ? '' : 's'} · ${fmtNum(os.reduce((t, o) => t + o.units, 0))} cases</h3>
+        ${os.map((o) => card(o)).join('')}`).join('');
+    };
     let body;
     if (loadOrder) {
-      // The last stop goes on the truck first. Carts aren't part of the pallet order; they're listed after.
-      const seq = orders.filter((o) => !o.is_cart).sort(byStop).reverse();
+      // Stops are numbered in loading order: Stop 001 is the last delivery, so it goes on first.
+      // Carts aren't part of the pallet order; they're listed after.
+      const seq = orders.filter((o) => !o.is_cart).sort(byStop);
       const carts = orders.filter((o) => o.is_cart);
-      body = `<p class="muted small">Load in this order: the last stop goes on first, so the first stop comes off first.</p>
+      body = `<p class="muted small">Load in this order: Stop 1 goes on first (it's the last delivery), so the first delivery comes off first.</p>
         ${seq.map((o, i) => card(o, i + 1)).join('') || (carts.length ? '' : '<div class="empty muted">No orders on this truck.</div>')}
-        ${carts.length ? `<h2 class="section-title">Carts (${carts.length})</h2>${carts.map((o) => card(o)).join('')}` : ''}`;
+        ${carts.length ? `<h2 class="section-title">Carts</h2>${withCarts(carts)}` : ''}`;
     } else {
       const active = orders.filter((o) => o.status !== 'done');
       const done = orders.filter((o) => o.status === 'done');
-      body = `${active.map((o) => card(o)).join('') || '<div class="empty muted">No orders waiting on this truck.</div>'}
-        ${done.length ? `<h2 class="section-title">Finished (${done.length})</h2>${done.map((o) => card(o)).join('')}` : ''}`;
+      body = `${withCarts(active) || '<div class="empty muted">No orders waiting on this truck.</div>'}
+        ${done.length ? `<h2 class="section-title">Finished (${done.length})</h2>${withCarts(done)}` : ''}`;
     }
     const openCount = orders.filter((o) => o.status === 'open').length;
     view.innerHTML = `
       ${known ? `<p class="muted small">${[...new Set(orders.map((o) => o.load_no))].length ? `Load #${[...new Set(orders.map((o) => o.load_no))].map(esc).join(', ')} · ` : ''}${orders.length} order${orders.length === 1 ? '' : 's'} · <b>${fmtNum(orders.reduce((n, o) => n + o.units, 0))} cases</b></p>` : ''}
       ${known ? notesHtml(notes, ctx, { title: 'Loading notes' }) : ''}
-      ${known && ctx.can('management') && orders.length ? '<div class="toolbar"><button class="btn btn-small btn-ghost btn-danger-text" data-act="clearTruck">Remove all orders on this truck</button></div>' : ''}
+      ${known && ctx.can('supervisor') && orders.length ? `<div class="toolbar">
+        <button class="btn btn-small btn-ghost" data-act="arrange">Redo stop #s &amp; carts</button>
+        ${ctx.can('management') ? '<button class="btn btn-small btn-ghost btn-danger-text" data-act="clearTruck">Remove all orders on this truck</button>' : ''}</div>` : ''}
       <nav class="tabs">
         <a href="#" data-act="mode" data-arg="pick" class="${loadOrder ? '' : 'active'}">Pick order</a>
         <a href="#" data-act="mode" data-arg="load" class="${loadOrder ? 'active' : ''}">Load order</a>
@@ -143,6 +159,14 @@ export async function truckView(ctx, truck) {
   ctx.actions.mode = (m) => { loadOrder = m === 'load'; render(); };
   ctx.actions.addNote = async () => { if (await addNote({ truck: Number(truck) })) render(); };
   ctx.actions.delNote = async (id) => { if (await deleteNote(id)) render(); };
+  ctx.actions.arrange = async () => {
+    if (!await confirmBox('Redo stop numbers and carts?', `Imported VIP orders on Truck ${truck} are renumbered so the last delivery is Stop 1, and orders of ${ctx.server?.cartMax ?? 35} cases or fewer are put on shared carts. Stop numbers or carts changed by hand on these orders are replaced. Orders typed in by hand aren't changed.`, 'Redo')) return;
+    try {
+      const r = await api.post(`/trucks/${truck}/arrange`);
+      toast(r.orders ? `${r.moved} of ${r.orders} orders changed · ${r.carts} cart${r.carts === 1 ? '' : 's'}` : 'No imported VIP orders on this truck', 'ok');
+    } catch (err) { toast(err.message, 'error'); }
+    render();
+  };
   ctx.actions.clearTruck = async () => { if (await removeTruckOrders(truck)) render(); };
   ctx.actions.next = async () => {
     try {

@@ -41,6 +41,15 @@ export async function settingsView(ctx) {
         <button class="btn btn-ghost" data-act="saveKegs">Save keg days</button>
       </section>
       <section class="card">
+        <h2>Stops and carts</h2>
+        <p class="muted small">When a VIP order record is imported, stops are numbered in loading order: VIP's last stop becomes <b>Stop 1</b>. Orders this many cases or fewer go on a <b>cart</b>, and small orders share a cart up to this many cases (two 15-case stores go on the same cart). 0 turns carts off.</p>
+        <label class="narrow-field">Cart size (cases)<input id="cartMax" type="number" inputmode="numeric" min="0" max="500" value="${esc(ctx.server?.cartMax ?? 35)}"></label>
+        <div class="toolbar">
+          <button class="btn btn-primary" data-act="saveCarts">Save cart size</button>
+          <button class="btn btn-ghost" data-act="arrangeAll">Redo today's trucks now</button>
+        </div>
+      </section>
+      <section class="card">
         <h2>Pause reasons</h2>
         <p class="muted small">What pickers can choose when they tap <b>Pause</b>. Paused time doesn't count toward pick time or pick rates. Pickers can also type their own reason under "Other…".</p>
         <ul class="plain reason-list">${reasons.map((r, i) => `
@@ -102,6 +111,20 @@ export async function settingsView(ctx) {
       reasons = [...r.pauseReasons];
       render();
       toast('Pause reasons saved', 'ok');
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  ctx.actions.saveCarts = async () => {
+    try {
+      const r = await api.put('/settings/carts', { max: Number(document.getElementById('cartMax').value) });
+      if (ctx.server) ctx.server.cartMax = r.cartMax;
+      toast(`Cart size saved: ${r.cartMax} cases. New imports use it; tap "Redo today's trucks now" for orders already in.`, 'ok');
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  ctx.actions.arrangeAll = async () => {
+    if (!await confirmBox("Redo today's stops and carts?", "Every imported VIP order on today's trucks is renumbered (last delivery = Stop 1) and small orders are put on shared carts. Stop numbers or carts changed by hand are replaced.", 'Redo')) return;
+    try {
+      const r = await api.post('/trucks/all/arrange');
+      toast(`${r.moved} of ${r.orders} orders changed · ${r.carts} cart${r.carts === 1 ? '' : 's'}`, 'ok');
     } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.saveKegs = async () => {

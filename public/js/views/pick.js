@@ -17,7 +17,7 @@ export function orderHeader(o, ctx) {
       <div class="muted small">${esc([o.address, o.city, o.state].filter(Boolean).join(', '))}</div>
       <div class="facts">
         <span><b>${esc(ctx.truckName(o.truck))}</b> · Load #${esc(o.load_no)}</span>
-        <span>${o.is_cart ? '<b class="cart-tag">CART</b>' : `Stop <b>${esc(o.stop || '—')}</b>`}</span>
+        <span>${o.is_cart ? `<b class="cart-tag">CART${o.cart_no ? ` ${o.cart_no}` : ''}</b>` : `Stop <b>${esc(o.stop || '—')}</b>`}${o.vip_stop && o.vip_stop !== o.stop ? `<span class="muted small">VIP stop ${esc(o.vip_stop)}</span>` : ''}</span>
         ${ctx.can('supervisor') ? '<button class="link-btn" data-act="editStop">Edit stop</button>' : ''}
         ${o.day_no ? `<span>Day ${esc(o.day_no)}</span>` : ''}
         ${o.order_date ? `<span>${esc(o.order_date)}</span>` : ''}
@@ -593,10 +593,11 @@ export async function editStop(o) {
     okText: 'Save',
     body: `
       <label>Stop number<input name="stop" inputmode="numeric" value="${esc(o.stop || '')}" autocomplete="off"></label>
-      <label class="radio"><input type="checkbox" name="cart" ${o.is_cart ? 'checked' : ''}> Cart (too small for a pallet). Shows "Cart" instead of the stop number.</label>`,
+      <label class="radio"><input type="checkbox" name="cart" ${o.is_cart ? 'checked' : ''}> Cart (too small for a pallet). Shows "Cart" instead of the stop number.</label>
+      <label>Cart number (orders with the same number share a cart)<input name="cartNo" inputmode="numeric" value="${esc(o.cart_no || '')}" autocomplete="off"></label>`,
     onOk: async (f) => {
-      const saved = await api.put(`/orders/${o.id}/stop`, { stop: f.elements.stop.value.trim(), cart: f.elements.cart.checked });
-      toast(saved.is_cart ? `${saved.store} is now a cart` : `${saved.store} is now Stop ${saved.stop}`, 'ok');
+      const saved = await api.put(`/orders/${o.id}/stop`, { stop: f.elements.stop.value.trim(), cart: f.elements.cart.checked, cartNo: f.elements.cartNo.value.trim() });
+      toast(saved.is_cart ? `${saved.store} is now on ${stopLabel(saved)}` : `${saved.store} is now Stop ${saved.stop}`, 'ok');
       return saved;
     },
   });

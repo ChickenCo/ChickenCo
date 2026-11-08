@@ -119,6 +119,15 @@ Also on the pick screen:
   remove them with ✕, then **Save**. Items not on the list go last, in VIP order. Until a
   list is saved (or after it's cleared), pick lists use the older word rules (30 packs
   first…); *Start this list from those rules* turns them into a list to edit.
+- **Stop numbers and carts (VIP imports).** Stops are numbered in loading order: VIP's last
+  stop becomes **Stop 1**, so Stop 1 is picked and loaded first and comes off last. Orders of
+  **35 cases or fewer** go on a cart, and small orders share a cart: two 15-case stores both go
+  on Cart 1, up to 35 cases a cart. Carts are numbered per truck (Cart 1 holds the last
+  deliveries). The truck screen groups the stores on each cart ("Cart 1 · 2 stores · 21 cases"),
+  and the pick list shows VIP's original stop number for reference. Admins change the cart size
+  under Settings › Stops and carts (0 turns carts off). **Redo stop #s & carts** on a truck
+  (supervisors and up), or *Redo today's trucks now* in Settings, applies it to orders already
+  imported. Orders typed in by hand keep their stop numbers.
 - **Edit stop** (on an order, or in Manage orders) changes the stop number, or marks the
   order as a **Cart** for small orders that don't go on a pallet. A cart shows **CART**
   instead of its stop number everywhere. Carts are listed after the numbered stops, and

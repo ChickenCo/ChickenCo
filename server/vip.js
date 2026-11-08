@@ -301,6 +301,39 @@ function applyKegRule(result, kegDays) {
   return { ...result, orders: kept, days, warnings, skipped: result.skipped || kegs ? { ...(result.skipped || {}), kegs } : result.skipped };
 }
 
+// VIP numbers stops in delivery order, but the truck is loaded last stop first. Per load:
+//  - orders of cartMax cases or fewer go on shared carts (several small stores to a cart, up to cartMax cases each);
+//  - the remaining (pallet) orders are renumbered in reverse: VIP's last stop becomes Stop 001.
+// VIP's own stop number is kept as vip_stop.
+function arrangeLoads(orders, { cartMax = 35 } = {}) {
+  const cases = (o) => o.lines.filter((l) => !l.vipOut).reduce((s, l) => s + l.qty, 0);
+  const byLoad = new Map();
+  for (const o of orders) {
+    o.vip_stop = o.vip_stop ?? o.stop;
+    if (!byLoad.has(o.load_no)) byLoad.set(o.load_no, []);
+    byLoad.get(o.load_no).push(o);
+  }
+  const stopNo = (o) => parseInt(o.vip_stop, 10) || 0;
+  for (const list of byLoad.values()) {
+    const small = cartMax > 0 ? list.filter((o) => cases(o) <= cartMax) : [];
+    const pallets = list.filter((o) => !small.includes(o)).sort((a, b) => stopNo(b) - stopNo(a));
+    pallets.forEach((o, i) => { o.stop = String(i + 1).padStart(3, '0'); o.is_cart = false; o.cart_no = null; });
+    // First fit, biggest orders first, so as few carts as possible.
+    const carts = [];
+    for (const o of [...small].sort((a, b) => cases(b) - cases(a) || stopNo(b) - stopNo(a))) {
+      const n = cases(o);
+      let cart = carts.find((c) => c.cases + n <= cartMax);
+      if (!cart) { cart = { cases: 0, orders: [] }; carts.push(cart); }
+      cart.cases += n;
+      cart.orders.push(o);
+    }
+    // Cart 1 holds the stops delivered last, like the pallets.
+    carts.sort((a, b) => Math.max(...b.orders.map(stopNo)) - Math.max(...a.orders.map(stopNo)));
+    carts.forEach((c, i) => c.orders.forEach((o) => { o.stop = ''; o.is_cart = true; o.cart_no = i + 1; }));
+  }
+  return orders;
+}
+
 function parseImport(input, filename = '', opts = {}) {
   if (Buffer.isBuffer(input) && isXlsx(input)) {
     const rows = readXlsx(input);
@@ -317,4 +350,4 @@ function parseImport(input, filename = '', opts = {}) {
   return parseVipText(text);
 }
 
-module.exports = { parseImport, parseVipText, parseCsv, parseOrderRecord, applyKegRule, deliveryWeekday, loadParts, upcOf };
+module.exports = { arrangeLoads, parseImport, parseVipText, parseCsv, parseOrderRecord, applyKegRule, deliveryWeekday, loadParts, upcOf };

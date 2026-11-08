@@ -59,7 +59,8 @@ function scanTime(req) {
 // Drivers can read orders and leave notes; picking needs the picker role or higher.
 const canPick = (user) => atLeast(user, 'picker');
 const canNote = (user) => user.role === 'driver' || atLeast(user, 'supervisor');
-const stopLabel = (o) => (o.is_cart ? 'Cart' : `Stop ${o.stop || '—'}`);
+const stopLabel = (o) => (o.is_cart ? `Cart${o.cart_no ? ` ${o.cart_no}` : ''}` : `Stop ${o.stop || '—'}`);
+const cartMax = () => getSetting('cart_max_cases', 35);
 const storeKey = (o) => String(o.account_no || o.store).trim().toUpperCase();
 
 // ---------- trucks ----------
@@ -241,6 +242,7 @@ api.get('/me', h((req) => ({
   trucks: trucks(),
   warehouseDigit: warehouseDigit(),
   kegDays: kegDays(),
+  cartMax: cartMax(),
   pickPriority: pickPriority(),
   pickPriorityList: pickPriorityList(),
   pauseReasons: pauseReasons(),
@@ -319,7 +321,7 @@ api.get('/orders', h((req) => {
     params.push(q, q, q, q);
   }
   const sql = `${ORDER_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY CASE o.status WHEN 'done' THEN 1 ELSE 0 END, o.is_cart, CAST(o.stop AS INTEGER), o.stop, o.id DESC LIMIT 500`;
+    ORDER BY CASE o.status WHEN 'done' THEN 1 ELSE 0 END, o.is_cart, o.cart_no, CAST(o.stop AS INTEGER), o.stop, o.id DESC LIMIT 500`;
   const rows = all(sql, ...params).map(withTruck);
   return req.query.truck === 'none' ? rows.filter((o) => o.truck == null) : rows;
 }));
@@ -400,10 +402,13 @@ function saveLines(orderId, lines, userId) {
 function createOrder(body, userId, how = 'created', { isTest = false } = {}) {
   const { header, lines } = readOrderBody(body);
   return tx(() => {
-    const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at, vip_ref, is_test)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    const cartNo = body.is_cart && int(body.cart_no) > 0 ? int(body.cart_no) : null;
+    const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at, vip_ref, is_test,
+        is_cart, cart_no, vip_stop)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     days.openDayId(), header.load_no, header.stop, header.store, header.account_no, header.address, header.city, header.state,
-    header.day_no, header.order_date, header.zone, userId, Date.now(), str(body.vip_ref, 80) || null, isTest ? 1 : 0);
+    header.day_no, header.order_date, header.zone, userId, Date.now(), str(body.vip_ref, 80) || null, isTest ? 1 : 0,
+    body.is_cart ? 1 : 0, cartNo, str(body.vip_stop, 20) || null);
     const orderId = Number(r.lastInsertRowid);
     saveLines(orderId, lines, userId);
     // Delivery notes that came with the order from VIP ("cooler take to east 80").
@@ -440,6 +445,8 @@ api.post('/orders/import/preview', requireRole('management'),
     let parsed;
     try { parsed = vip.parseImport(input, filename, { warehouseDigit: warehouseDigit() }); } catch (err) { fail(400, err.message); }
     const { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = vip.applyKegRule(parsed, kegDays());
+    // VIP order records: reverse the stop numbers and put small orders on shared carts.
+    if (format === 'VIP order record') vip.arrangeLoads(orders, { cartMax: cartMax() });
     const day = days.displayDay();
     return {
       format, warnings, skipped, days: dayGroups,
@@ -470,12 +477,12 @@ api.post('/orders/import', requireRole('management'), h((req) => {
     // A test run is marked TEST and kept apart from real imports, so the real orders can still come in later.
     const ref = o.vip_ref ? `${testRun ? 'test:' : ''}${str(o.vip_ref, 80)}` : null;
     if (ref && one('SELECT 1 FROM orders WHERE vip_ref = ?', ref)) {
-      skipped.push({ store: o.store, stop: o.stop, error: 'Already imported' });
+      skipped.push({ store: o.store, stop: o.stop, is_cart: o.is_cart, cart_no: o.cart_no, error: 'Already imported' });
       continue;
     }
     try { created.push(createOrder({ ...o, vip_ref: ref }, req.user.id, 'imported', { isTest: testRun })); } catch (err) {
       if (!(err instanceof HttpError)) throw err;
-      skipped.push({ store: o.store, stop: o.stop, error: err.message });
+      skipped.push({ store: o.store, stop: o.stop, is_cart: o.is_cart, cart_no: o.cart_no, error: err.message });
     }
   }
   // UPCs from the file become barcodes, unless that barcode already belongs to a different item.
@@ -525,10 +532,12 @@ api.put('/orders/:id/stop', requireRole('supervisor'), h((req) => {
   const order = getOrder(req.params.id);
   const cart = req.body.cart === undefined ? !!order.is_cart : !!req.body.cart;
   const stop = req.body.stop === undefined ? order.stop : str(req.body.stop, 20);
+  const cartNo = !cart ? null : req.body.cartNo === undefined ? order.cart_no : (int(req.body.cartNo) > 0 ? int(req.body.cartNo) : null);
   if (!cart && !stop) fail(400, 'Enter a stop number');
   if (stop !== order.stop) logEvent(order.id, req.user.id, 'stop_changed', { from: order.stop, to: stop });
-  if (cart !== !!order.is_cart) logEvent(order.id, req.user.id, cart ? 'made_cart' : 'unmade_cart');
-  run('UPDATE orders SET stop = ?, is_cart = ? WHERE id = ?', stop, cart ? 1 : 0, order.id);
+  if (cart !== !!order.is_cart) logEvent(order.id, req.user.id, cart ? 'made_cart' : 'unmade_cart', { cartNo });
+  else if (cart && cartNo !== order.cart_no) logEvent(order.id, req.user.id, 'cart_changed', { from: order.cart_no, to: cartNo });
+  run('UPDATE orders SET stop = ?, is_cart = ?, cart_no = ? WHERE id = ?', stop, cart ? 1 : 0, cartNo, order.id);
   changed();
   return orderDetail(order.id);
 }));
@@ -675,7 +684,7 @@ api.post('/trucks/:truck/next', h((req) => {
   const loads = loadsForTruck(req.params.truck);
   const id = day && loads.length && tx(() => {
     const o = one(`SELECT id FROM orders WHERE day_id = ? AND load_no IN (${loads.map(() => '?').join(',')}) AND status = 'open'
-      ORDER BY is_cart, CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, ...loads);
+      ORDER BY is_cart, cart_no, CAST(stop AS INTEGER), stop, id LIMIT 1`, day.id, ...loads);
     if (!o) return null;
     run("UPDATE orders SET status = 'picking', picker_id = ?, started_at = COALESCE(started_at, ?) WHERE id = ?", req.user.id, Date.now(), o.id);
     startStretch(o.id);
@@ -838,7 +847,7 @@ api.post('/orders/:id/lines/:lineId/request', h((req) => {
   return orderDetail(order.id);
 }));
 
-api.get('/approvals', requireRole('supervisor'), h(() => all(`SELECT r.*, u.name AS picker_name, o.store, o.stop, o.is_cart, o.load_no,
+api.get('/approvals', requireRole('supervisor'), h(() => all(`SELECT r.*, u.name AS picker_name, o.store, o.stop, o.is_cart, o.cart_no, o.load_no,
     l.description, l.code, l.qty, l.picked, l.unit
   FROM pick_requests r JOIN orders o ON o.id = r.order_id JOIN order_lines l ON l.id = r.line_id
   LEFT JOIN users u ON u.id = r.user_id WHERE r.status = 'pending' ORDER BY r.created_at`).map((r) => ({ ...r, truck: truckForLoad(r.load_no) }))));
@@ -1159,6 +1168,15 @@ api.put('/settings/priority-list', requireRole('supervisor'), h((req) => {
   return { pickPriorityList: pickPriorityList() };
 }));
 
+// Orders this many cases or fewer go on a shared cart when a VIP order record is imported (0 = never).
+api.put('/settings/carts', requireRole('admin'), h((req) => {
+  const n = int(req.body.max);
+  if (!(n >= 0 && n <= 500)) fail(400, 'Enter a number of cases from 0 to 500');
+  setSetting('cart_max_cases', n);
+  changed();
+  return { cartMax: cartMax() };
+}));
+
 api.put('/settings/kegs', requireRole('admin'), h((req) => {
   const list = (Array.isArray(req.body.days) ? req.body.days : []).map(int).filter((d) => d >= 0 && d <= 6);
   setSetting('keg_days', [...new Set(list)].sort());
@@ -1207,7 +1225,7 @@ api.get('/days/:id', requireRole('management'), h((req) => {
 api.get('/reports/outs', requireRole('management'), h((req) => {
   const from = int(req.query.from) || 0;
   const to = int(req.query.to) || Date.now();
-  return all(`SELECT o.id AS order_id, o.load_no, o.stop, o.is_cart, o.store, o.account_no, o.order_date, o.status, l.invoice_no, l.code, l.description, l.qty,
+  return all(`SELECT o.id AS order_id, o.load_no, o.stop, o.is_cart, o.cart_no, o.store, o.account_no, o.order_date, o.status, l.invoice_no, l.code, l.description, l.qty,
       l.out_qty, l.out_reason, l.out_status, l.out_at, ob.name AS out_by_name, rb.name AS reviewed_by_name, l.reviewed_at
     FROM order_lines l JOIN orders o ON o.id = l.order_id
     LEFT JOIN users ob ON ob.id = l.out_by LEFT JOIN users rb ON rb.id = l.reviewed_by
@@ -1282,6 +1300,30 @@ api.delete('/trucks/:truck/orders', requireRole('management'), h(async (req) => 
   });
   changed();
   return { removed };
+}));
+
+// Redo stop numbers and carts for today's imported VIP orders on a truck (or all trucks):
+// pallets numbered last stop first, small orders shared onto carts. Typed-in orders are left alone.
+api.post('/trucks/:truck/arrange', requireRole('supervisor'), h((req) => {
+  const truck = req.params.truck;
+  if (truck !== 'all' && !trucks().some((t) => t.truck === int(truck))) fail(404, 'Unknown truck');
+  const { ids } = truckOrderIds(truck);
+  const orders = ids.map((id) => one('SELECT id, load_no, stop, vip_stop, vip_ref, is_cart, cart_no FROM orders WHERE id = ?', id))
+    .filter((o) => o.vip_ref)
+    .map((o) => ({ ...o, vip_stop: o.vip_stop || o.stop,
+      lines: all("SELECT qty, out_reason = 'vip' AS vipOut FROM order_lines WHERE order_id = ?", o.id).map((l) => ({ qty: l.qty, vipOut: !!l.vipOut })) }));
+  const before = new Map(orders.map((o) => [o.id, stopLabel(o)]));
+  vip.arrangeLoads(orders, { cartMax: cartMax() });
+  let moved = 0;
+  tx(() => {
+    for (const o of orders) {
+      const label = stopLabel(o);
+      if (label !== before.get(o.id)) { moved++; logEvent(o.id, req.user.id, 'stop_changed', { from: before.get(o.id), to: label }); }
+      run('UPDATE orders SET stop = ?, is_cart = ?, cart_no = ?, vip_stop = ? WHERE id = ?', o.stop, o.is_cart ? 1 : 0, o.cart_no, o.vip_stop, o.id);
+    }
+  });
+  if (moved) changed();
+  return { orders: orders.length, moved, carts: new Set(orders.filter((o) => o.is_cart).map((o) => `${o.load_no}:${o.cart_no}`)).size };
 }));
 
 // Clear out test runs and demo data in one go (real orders are untouched).
