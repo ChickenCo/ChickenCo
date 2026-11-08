@@ -1,6 +1,6 @@
 // Management reports: every out (shortage), and finished orders with who picked them.
 import { api, qs } from '../api.js';
-import { esc, fmtTime, fmtNum, downloadCsv, ask } from '../ui.js';
+import { esc, fmtTime, fmtNum, downloadCsv, ask, pickTime } from '../ui.js';
 import { dayLists } from './trucks.js';
 
 const view = document.getElementById('view');
@@ -81,7 +81,7 @@ export async function reportsView(ctx) {
             <td>${fmtTime(o.completed_at)}</td><td>${o.truck ?? '?'} / ${o.is_cart ? 'Cart' : esc(o.stop)}</td><td>${esc(o.store)}</td>
             <td class="num">${o.line_count}</td><td class="num">${o.units_picked}/${o.units}</td><td class="num">${o.units_out || ''}</td>
             <td>${esc(o.picker_name || '')}</td><td>${esc(o.approved_by_name || '')}</td>
-            <td>${o.started_at && o.submitted_at ? `${Math.max(1, Math.round((o.submitted_at - o.started_at) / 60000))} min` : ''}</td>
+            <td>${esc(pickTime(o))}</td>
           </tr>`).join('') || '<tr><td colspan="9" class="muted">No finished orders in this period.</td></tr>'}</tbody>
         </table></div>`;
     }
@@ -131,10 +131,11 @@ export async function reportsView(ctx) {
       ]);
     } else {
       downloadCsv(`orders_${stamp}.csv`, [
-        ['Finished', 'Truck', 'Load', 'Stop', 'Store', 'Order date', 'Lines', 'Ordered', 'Picked', 'Out', 'Picker', 'Approved by', 'Started', 'Submitted'],
+        ['Finished', 'Truck', 'Load', 'Stop', 'Store', 'Order date', 'Lines', 'Ordered', 'Picked', 'Out', 'Picker', 'Approved by', 'Started', 'Submitted', 'Pick minutes', 'Paused minutes'],
         ...rows.map((o) => [new Date(o.completed_at).toLocaleString(), o.truck, o.load_no, o.is_cart ? 'Cart' : o.stop, o.store, o.order_date, o.line_count, o.units,
           o.units_picked, o.units_out, o.picker_name || '', o.approved_by_name || '',
-          o.started_at ? new Date(o.started_at).toLocaleString() : '', o.submitted_at ? new Date(o.submitted_at).toLocaleString() : '']),
+          o.started_at ? new Date(o.started_at).toLocaleString() : '', o.submitted_at ? new Date(o.submitted_at).toLocaleString() : '',
+          o.pick_ms ? Math.round(o.pick_ms / 60000) : '', o.paused_total ? Math.round(o.paused_total / 60000) : '']),
       ]);
     }
   };

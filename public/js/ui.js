@@ -39,7 +39,15 @@ export function rateHtml(rate, target, { big = false } = {}) {
 
 export function fmtDuration(ms) {
   const m = Math.round(ms / 60000);
+  if (m < 1) return 'under 1 min';
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+// How long an order took to pick, not counting pauses: "24 min (paused 10 min)".
+export function pickTime(o) {
+  const ms = o.pick_ms || (o.submitted_at && o.started_at ? o.submitted_at - o.started_at : 0);
+  if (!ms) return '';
+  return `${fmtDuration(ms)}${o.paused_total >= 60000 ? ` (paused ${fmtDuration(o.paused_total)})` : ''}`;
 }
 
 export const fmtNum = (n) => Number(n || 0).toLocaleString();

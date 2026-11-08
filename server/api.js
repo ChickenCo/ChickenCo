@@ -1153,7 +1153,8 @@ api.put('/settings/priority-list', requireRole('supervisor'), h((req) => {
     ? { type: 'heading', label: str(e.label, 60) }
     : { type: 'item', code: str(e.code, 40).toUpperCase() }))
     .filter((e) => (e.type === 'heading' ? e.label : e.code && !seen.has(e.code) && seen.add(e.code)));
-  setSetting('pick_priority_list', list);
+  // An empty list goes back to the word rules.
+  setSetting('pick_priority_list', list.some((e) => e.type === 'item') ? list : null);
   changed();
   return { pickPriorityList: pickPriorityList() };
 }));

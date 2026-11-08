@@ -1,6 +1,6 @@
 // Home: the Trucks menu, and the list of orders on one truck.
 import { api, qs } from '../api.js';
-import { esc, toast, statusPill, COMPANY, fmtTime, fmtNum, rateHtml, stopLabel } from '../ui.js';
+import { esc, toast, statusPill, COMPANY, fmtTime, fmtNum, rateHtml, stopLabel, pickTime } from '../ui.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 import { removeTruckOrders } from './orders.js';
 
@@ -109,6 +109,8 @@ export async function truckView(ctx, truck) {
             <span>${o.lines_done}/${o.line_count} lines · ${done}/${o.units} cases${o.lines_out ? ` · <b class="text-danger">${o.lines_out} out</b>` : ''}</span>
             <span>${o.picker_name ? esc(o.picker_name) : ''}</span>
           </div>
+          ${o.paused_at ? `<div class="small text-warn">⏸ Paused: ${esc(o.pause_reason)}</div>` : ''}
+          ${['review', 'done'].includes(o.status) && pickTime(o) ? `<div class="small muted">⏱ Picked in ${esc(pickTime(o))}</div>` : ''}
         </a>`;
     };
     const byStop = (a, b) => (parseInt(a.stop, 10) || 0) - (parseInt(b.stop, 10) || 0) || String(a.stop).localeCompare(String(b.stop));

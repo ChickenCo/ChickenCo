@@ -1,6 +1,6 @@
 // Management: list all orders, and enter / edit an order from the VIP pick list.
 import { api, qs } from '../api.js';
-import { esc, toast, choose, confirmBox, statusPill, fmtTime, ask, stopLabel } from '../ui.js';
+import { esc, toast, choose, confirmBox, statusPill, fmtTime, ask, stopLabel, fmtDuration, pickTime } from '../ui.js';
 import { editStop } from './pick.js';
 
 const view = document.getElementById('view');
@@ -26,7 +26,7 @@ export async function ordersView(ctx) {
       <li class="line" data-act="open" data-arg="${o.id}">
         <span class="line-main">
           <span class="line-name">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</span>
-          <span class="muted small">${esc(ctx.truckName(o.truck))} · ${o.is_cart ? '<b>Cart</b>' : esc(stopLabel(o))} · ${o.line_count} lines${o.order_date ? ` · ${esc(o.order_date)}` : ''}${o.picker_name ? ` · ${esc(o.picker_name)}` : ''}</span>
+          <span class="muted small">${esc(ctx.truckName(o.truck))} · ${o.is_cart ? '<b>Cart</b>' : esc(stopLabel(o))} · ${o.line_count} lines${o.order_date ? ` · ${esc(o.order_date)}` : ''}${o.picker_name ? ` · ${esc(o.picker_name)}` : ''}${['review', 'done'].includes(o.status) && pickTime(o) ? ` · ⏱ ${esc(pickTime(o))}` : ''}${o.paused_at ? ` · <b>⏸ ${esc(o.pause_reason)}</b>` : ''}</span>
         </span>
         ${statusPill(o.status)}
       </li>`).join('') || '<li class="empty muted">No orders match.</li>';
@@ -59,7 +59,7 @@ export async function ordersView(ctx) {
       o.status === 'done' && { key: 'reopen', label: 'Reopen order' },
       { key: 'history', label: 'History' },
       { key: 'delete', label: 'Delete order', danger: true },
-    ].filter(Boolean), `${esc(ctx.truckName(o.truck))} · ${statusPill(o.status)}`);
+    ].filter(Boolean), `${esc(ctx.truckName(o.truck))} · ${statusPill(o.status)}${pickTime(o) && o.status !== 'open' ? ` · picked in ${esc(pickTime(o))}` : ''}`);
     try {
       if (pick === 'view') location.hash = `#/order/${o.id}`;
       if (pick === 'review') location.hash = `#/review/${o.id}`;
@@ -118,7 +118,12 @@ const EVENT_TEXT = {
   started: () => 'Started picking',
   released: () => 'Stopped picking',
   assigned: (d) => `Assigned to ${d.to}`,
-  picked: (d) => `#${d.code}: picked ${d.from} → ${d.to}${d.via === 'scan' ? ' (scanned)' : ''}`,
+  picked: (d) => `#${d.code}: picked ${d.from} → ${d.to}${d.via === 'scan' ? ' (scanned)' : ''}${d.approvedBy ? ` (OK'd by ${d.approvedBy})` : ''}`,
+  paused: (d) => `Paused: ${d.reason}`,
+  resumed: (d) => `Resumed after ${fmtDuration(d.ms || 0)}${d.reason ? ` (${d.reason})` : ''}`,
+  approval_requested: (d) => `#${d.code}: asked a supervisor to add ${d.to - d.from} without a scan`,
+  approval_given: (d) => `#${d.code}: supervisor OK'd adding ${d.qty}`,
+  approval_denied: (d) => `#${d.code}: supervisor said no to adding ${d.qty}`,
   out: (d) => `#${d.code}: marked ${d.qty} out (${d.reason === 'cant_find' ? "can't find" : 'out of stock'})`,
   out_cleared: (d) => `#${d.code}: out cleared`,
   submitted: (d) => `Sent to supervisor (${d.outs} out)`,

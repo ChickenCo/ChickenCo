@@ -15,6 +15,7 @@ import { ratesView } from './views/rates.js';
 import { floorView } from './views/floor.js';
 import { importView } from './views/imports.js';
 import { priorityView } from './views/priority.js';
+import { approvalsView } from './views/approvals.js';
 
 const view = document.getElementById('view');
 const topbar = document.getElementById('topbar');
@@ -42,7 +43,7 @@ const ctx = {
   truckName: (n) => (n ? `Truck ${n}` : 'Unknown truck'),
   async reloadMe() {
     const me = await api.get('/me');
-    Object.assign(ctx, { user: me.user, trucks: me.trucks, warehouseDigit: me.warehouseDigit, pickPriority: me.pickPriority || [], vapidKey: me.vapidKey, server: me });
+    Object.assign(ctx, { user: me.user, trucks: me.trucks, warehouseDigit: me.warehouseDigit, pickPriority: me.pickPriority || [], pickPriorityList: me.pickPriorityList || null, vapidKey: me.vapidKey, server: me });
     lastVersion = me.version;
     loadedApp = loadedApp || me.appVersion;
   },
@@ -61,6 +62,7 @@ const routes = [
   [/^truck\/(\w+)$/, truckView],
   [/^order\/(\d+)$/, pickView],
   [/^review$/, reviewListView, 'supervisor'],
+  [/^approvals$/, approvalsView, 'supervisor'],
   [/^review\/(\d+)$/, reviewView, 'supervisor'],
   [/^orders$/, ordersView, 'management'],
   [/^import$/, importView, 'management'],
@@ -109,10 +111,11 @@ document.getElementById('menuBtn').onclick = async () => {
   const items = [
     { key: '#/', label: 'Trucks' },
     ctx.can('supervisor') && { key: '#/floor', label: 'Floor (who is picking)' },
+    ctx.can('supervisor') && { key: '#/approvals', html: `Picks to OK (no scan)${badge(ctx.counts.approvals)}` },
     ctx.can('supervisor') && { key: '#/review', html: `Outs to review${badge(ctx.counts.review)}` },
     ctx.can('supervisor') && { key: '#/barcodes', html: `Barcodes to check${badge(ctx.counts.pendingBarcodes)}` },
     ctx.can('supervisor') && { key: '#/rates', label: 'Pick rates' },
-    ctx.can('supervisor') && { key: '#/priority', label: 'Pick priority (30 packs first…)' },
+    ctx.can('supervisor') && { key: '#/priority', label: 'Pick priority list' },
     ctx.can('management') && { key: '#/orders', label: 'Manage orders' },
     ctx.can('management') && { key: '#/import', label: 'Import from VIP' },
     ctx.can('management') && { key: '#/items', label: 'Items & barcodes' },
@@ -202,8 +205,8 @@ async function poll() {
   if (!ctx.user || document.hidden) return;
   try {
     const p = await api.get('/ping');
-    ctx.counts = { review: p.review, pendingBarcodes: p.pendingBarcodes, pinRequests: p.pinRequests };
-    menuDot.hidden = !(p.review || p.pendingBarcodes || p.pinRequests);
+    ctx.counts = { review: p.review, pendingBarcodes: p.pendingBarcodes, pinRequests: p.pinRequests, approvals: p.approvals };
+    menuDot.hidden = !(p.review || p.pendingBarcodes || p.pinRequests || p.approvals);
     if (loadedApp && p.appVersion && p.appVersion !== loadedApp) showUpdate();
     const busy = modalOpen() || Scanner.isOpen() || document.activeElement?.matches('input, textarea, select');
     if (p.version !== lastVersion && ctx.refresh && !busy) {

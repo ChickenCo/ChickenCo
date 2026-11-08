@@ -162,4 +162,6 @@ test('supervisors build the pick priority from specific items', async () => {
     { type: 'item', code: '00735', description: 'BUD LT 30/12 CAN' },
     { type: 'item', code: '00439', description: 'MULTRA 24/12 CAN' },
   ]);
+  // Taking every item off goes back to the word rules.
+  assert.equal((await boss.put('/settings/priority-list', { list: [{ type: 'heading', label: 'Empty' }] })).pickPriorityList, null);
 });

@@ -20,7 +20,7 @@ export async function floorView(ctx) {
     if (!f.day) { view.innerHTML = '<div class="empty muted">No orders yet.</div>'; return; }
     const picking = f.people.filter((p) => p.order);
     const free = f.people.filter((p) => !p.order);
-    const idle = (p) => p.order && p.lastAt && Date.now() - p.lastAt > IDLE_MIN * 60000;
+    const idle = (p) => p.order && !p.order.paused_at && p.lastAt && Date.now() - p.lastAt > IDLE_MIN * 60000;
     const person = (p) => `
       <li class="line floor-row ${idle(p) ? 'idle' : ''}">
         <span class="line-main">
@@ -29,7 +29,8 @@ export async function floorView(ctx) {
             <span class="progress"><span style="width:${p.order.units ? Math.round((p.order.done / p.order.units) * 100) : 0}%"></span></span>
             <span class="muted small">${p.order.done}/${p.order.units} cases${p.order.others ? ` · also holding ${p.order.others} other order${p.order.others === 1 ? '' : 's'}` : ''}</span>`
             : '<span class="muted small">Not on an order</span>'}
-          <span class="small ${idle(p) ? 'text-warn' : 'muted'}">Last scan ${ago(p.lastAt)}${idle(p) ? ` · no scans for ${IDLE_MIN}+ min` : ''}</span>
+          ${p.order?.paused_at ? `<span class="small text-warn"><b>⏸ Paused: ${esc(p.order.pause_reason)}</b> · ${Math.max(0, Math.round((Date.now() - p.order.paused_at) / 60000))} min</span>` : ''}
+          <span class="small ${idle(p) && !p.order?.paused_at ? 'text-warn' : 'muted'}">Last scan ${ago(p.lastAt)}${idle(p) ? ` · no scans for ${IDLE_MIN}+ min` : ''}</span>
         </span>
         <span class="floor-rate">${p.cases ? rateHtml(p.rate, f.target) : ''}</span>
       </li>`;

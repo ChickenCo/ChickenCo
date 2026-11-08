@@ -1,66 +1,184 @@
-// Supervisors: the order pack types go in on every pick list (30 packs first, then 18 packs, ...).
+// Supervisors: the pick priority list. Search for items and put them in the order they should be picked,
+// with optional headings ("30 packs", "Back wall"...). Items not on the list go last, in VIP order.
 import { api } from '../api.js';
-import { esc, toast } from '../ui.js';
+import { esc, toast, ask, confirmBox } from '../ui.js';
 import { priorityOf } from '../priority.js';
 
 const view = document.getElementById('view');
+const MAX_RESULTS = 40;
 
 export async function priorityView(ctx) {
   ctx.chrome('Pick priority', '#/');
-  let rules = (ctx.pickPriority || []).map((r) => ({ label: r.label, words: r.match.join(', ') }));
   const items = await api.get('/items').catch(() => []);
+  const byCode = new Map(items.map((i) => [i.code, i]));
+  let list = (ctx.pickPriorityList || []).map((e) => ({ ...e }));
+  let dirty = false;
+  let q = '';
+  let target = ''; // add new items at the end of this heading's section ('' = end of the list)
 
-  const asRules = () => rules.map((r) => ({ label: r.label.trim(), match: r.words.split(',').map((w) => w.trim()).filter(Boolean) }));
-
-  function preview() {
-    const live = asRules();
-    const groups = [...live.map((r) => ({ label: r.label || 'Untitled', items: [] })), { label: 'Everything else', items: [] }];
-    for (const it of items) groups[priorityOf(it.description, live)].items.push(it);
-    const box = document.getElementById('prioPreview');
-    if (!box) return;
-    box.innerHTML = items.length ? groups.map((g, i) => `
-      <li><b>${i < live.length ? `${i + 1}. ` : ''}${esc(g.label)}</b> <span class="muted">· ${g.items.length} item${g.items.length === 1 ? '' : 's'}</span>
-        ${g.items.length ? `<span class="muted small prio-eg">${g.items.slice(0, 4).map((x) => esc(x.description)).join(' · ')}${g.items.length > 4 ? ' …' : ''}</span>` : ''}</li>`).join('')
-      : '<li class="muted">Import a VIP file to see which items each rule catches.</li>';
-  }
+  const onList = () => new Set(list.filter((e) => e.type === 'item').map((e) => e.code));
+  const nameOf = (e) => byCode.get(e.code)?.description || e.description || '(item not in the item list)';
+  const headings = () => list.map((e, i) => ({ e, i })).filter((x) => x.e.type === 'heading');
 
   function render() {
+    const rules = ctx.pickPriority || [];
     view.innerHTML = `
-      <p class="muted small">Pick lists show items in this order, top to bottom. Each rule catches items whose description contains any of its words, e.g. <b>30/12</b> or <b>30 PK</b>. "2/12" won't catch "12/12", so list both if you want both. Anything not caught goes last, in VIP order.</p>
-      <div id="prioRules">${rules.map((r, i) => `
-        <section class="card prio-rule" data-i="${i}">
-          <div class="row"><b class="prio-num">${i + 1}</b>
-            <span class="btn-group">
-              <button class="btn btn-small btn-ghost" data-act="up" data-arg="${i}" ${i ? '' : 'disabled'} aria-label="Move up">↑</button>
-              <button class="btn btn-small btn-ghost" data-act="down" data-arg="${i}" ${i < rules.length - 1 ? '' : 'disabled'} aria-label="Move down">↓</button>
-              <button class="btn btn-small btn-ghost btn-danger-text" data-act="del" data-arg="${i}" aria-label="Remove rule">✕</button>
-            </span></div>
-          <label>Name<input name="label" value="${esc(r.label)}" placeholder="e.g. 30 packs" autocomplete="off"></label>
-          <label>Words to look for (comma between)<input name="words" value="${esc(r.words)}" placeholder="30/12, 30 PK" autocomplete="off" autocapitalize="characters"></label>
-        </section>`).join('') || '<p class="muted">No rules yet: pick lists follow VIP order.</p>'}</div>
-      <div class="toolbar">
-        <button class="btn btn-ghost" data-act="add">+ Add rule</button>
-        <button class="btn btn-primary" data-act="save">Save priority</button>
-      </div>
-      <section class="card"><h2>Which items go where</h2><ul class="plain prio-preview" id="prioPreview"></ul></section>`;
-    view.querySelectorAll('.prio-rule input').forEach((inp) => {
-      inp.oninput = () => { rules[Number(inp.closest('.prio-rule').dataset.i)][inp.name] = inp.value; preview(); };
-    });
-    preview();
+      <p class="muted small">Pick lists show items in this order, top to bottom. Search for an item and tap <b>Add</b>. Headings (like <b>30 packs</b> or <b>Back wall</b>) show on the pick list above the items under them. Items not on this list go last, in VIP order.</p>
+      ${!ctx.pickPriorityList ? `<div class="banner">No list saved yet, so pick lists use the older word rules${rules.length ? ` (${esc(rules.map((r) => r.label).join(', '))})` : ''}.
+        ${rules.length && items.length ? '<button class="link-btn" data-act="fromRules">Start this list from those rules</button>' : ''}</div>` : ''}
+      <section class="card prio-search">
+        <input type="search" id="prioQ" placeholder="Search items: name or item #" value="${esc(q)}" autocomplete="off" autocapitalize="characters">
+        ${headings().length ? `<label class="small">Add to
+          <select id="prioTarget"><option value="">End of the list</option>${headings().map((h) => `<option value="${h.i}" ${String(h.i) === target ? 'selected' : ''}>Under "${esc(h.e.label)}"</option>`).join('')}</select></label>` : ''}
+        <ul class="lines prio-results" id="prioResults"></ul>
+      </section>
+      <div class="row"><h2 class="section-title">Priority list (${list.filter((e) => e.type === 'item').length} items)</h2>
+        <button class="btn btn-small btn-ghost" data-act="addHeading">+ Heading</button></div>
+      <ol class="prio-list" id="prioList"></ol>
+      <div class="bottom-bar">
+        ${list.length ? '<button class="btn btn-ghost btn-danger-text" data-act="clear">Clear</button>' : ''}
+        <button class="btn btn-primary btn-scan" data-act="save" id="prioSave">${dirty ? 'Save changes' : 'Saved'}</button>
+      </div>`;
+    const input = document.getElementById('prioQ');
+    input.oninput = () => { q = input.value.trim(); renderResults(); };
+    const sel = document.getElementById('prioTarget');
+    if (sel) sel.onchange = () => { target = sel.value; };
+    renderResults();
+    renderList();
   }
 
-  const move = (i, d) => { const j = i + d; [rules[i], rules[j]] = [rules[j], rules[i]]; render(); };
+  function renderResults() {
+    const box = document.getElementById('prioResults');
+    if (!box) return;
+    if (!q) { box.innerHTML = items.length ? '' : '<li class="muted">No items yet. Import a VIP file first.</li>'; return; }
+    const words = q.toUpperCase().split(/\s+/).filter(Boolean);
+    const hits = items.filter((i) => words.every((w) => i.description.toUpperCase().includes(w) || i.code.toUpperCase().includes(w)));
+    const have = onList();
+    box.innerHTML = hits.slice(0, MAX_RESULTS).map((i) => `
+      <li class="line">
+        <span class="line-main"><span class="line-name">${esc(i.description)}</span><span class="muted small">#${esc(i.code)}</span></span>
+        ${have.has(i.code) ? '<span class="muted small">On list ✓</span>' : `<button class="btn btn-small btn-primary" data-act="addItem" data-arg="${esc(i.code)}">Add</button>`}
+      </li>`).join('')
+      + (hits.length > MAX_RESULTS ? `<li class="muted small">${hits.length - MAX_RESULTS} more. Type more of the name to narrow it down.</li>` : '')
+      + (hits.length > 1 && hits.some((i) => !have.has(i.code)) ? `<li><button class="btn btn-small btn-ghost" data-act="addAll">Add all ${hits.filter((i) => !have.has(i.code)).length} shown</button></li>` : '')
+      || '<li class="muted">No items match.</li>';
+  }
+
+  function renderList() {
+    const box = document.getElementById('prioList');
+    if (!box) return;
+    let n = 0;
+    box.innerHTML = list.map((e, i) => `
+      <li class="prio-entry ${e.type}">
+        ${e.type === 'heading'
+    ? `<b class="prio-heading">${esc(e.label)}</b>`
+    : `<span class="prio-num">${++n}</span><span class="line-main"><span class="line-name">${esc(nameOf(e))}</span><span class="muted small">#${esc(e.code)}</span></span>`}
+        <span class="btn-group">
+          ${e.type === 'heading' ? `<button class="btn btn-small btn-ghost" data-act="rename" data-arg="${i}" aria-label="Rename heading">✎</button>` : ''}
+          <button class="btn btn-small btn-ghost" data-act="up" data-arg="${i}" ${i ? '' : 'disabled'} aria-label="Move up">↑</button>
+          <button class="btn btn-small btn-ghost" data-act="down" data-arg="${i}" ${i < list.length - 1 ? '' : 'disabled'} aria-label="Move down">↓</button>
+          <button class="btn btn-small btn-ghost btn-danger-text" data-act="del" data-arg="${i}" aria-label="Remove">✕</button>
+        </span>
+      </li>`).join('') || '<li class="muted">Nothing on the list yet. Search above to add items.</li>';
+  }
+
+  const changed = (full = false) => {
+    dirty = true;
+    if (full) { render(); return; }
+    renderList();
+    renderResults();
+    const btn = document.getElementById('prioSave');
+    if (btn) btn.textContent = 'Save changes';
+  };
+
+  // Insert after the last entry of the chosen heading's section, or at the end.
+  function insert(entries) {
+    let at = list.length;
+    if (target !== '' && list[Number(target)]?.type === 'heading') {
+      at = Number(target) + 1;
+      while (at < list.length && list[at].type !== 'heading') at += 1;
+    }
+    list.splice(at, 0, ...entries);
+    // Keep the target pointing at the same heading.
+    if (target !== '' && at <= Number(target)) target = String(Number(target) + entries.length);
+  }
+
+  ctx.actions.addItem = (code) => {
+    if (onList().has(code)) return;
+    insert([{ type: 'item', code }]);
+    changed();
+    toast(`Added ${byCode.get(code)?.description || code}`, 'ok');
+  };
+  ctx.actions.addAll = () => {
+    const words = q.toUpperCase().split(/\s+/).filter(Boolean);
+    const have = onList();
+    const add = items.filter((i) => !have.has(i.code) && words.every((w) => i.description.toUpperCase().includes(w) || i.code.toUpperCase().includes(w)))
+      .slice(0, MAX_RESULTS).map((i) => ({ type: 'item', code: i.code }));
+    insert(add);
+    changed();
+    toast(`Added ${add.length} items`, 'ok');
+  };
+  const headingName = (title, value = '') => ask({
+    title,
+    okText: 'Save',
+    body: `<label>Heading<input name="label" maxlength="60" value="${esc(value)}" placeholder="e.g. 30 packs" autocomplete="off"></label>`,
+    onOk: (f) => { const v = f.elements.label.value.trim(); if (!v) throw new Error('Type a heading'); return v; },
+  });
+  ctx.actions.addHeading = async () => {
+    const label = await headingName('New heading');
+    if (!label) return;
+    list.push({ type: 'heading', label });
+    target = String(list.length - 1);
+    changed(true);
+  };
+  ctx.actions.rename = async (i) => {
+    const e = list[Number(i)];
+    const label = await headingName('Rename heading', e.label);
+    if (label) { e.label = label; changed(true); }
+  };
+  const move = (i, d) => {
+    const j = i + d;
+    [list[i], list[j]] = [list[j], list[i]];
+    if (target === String(i)) target = String(j); else if (target === String(j)) target = String(i);
+    changed(list[i].type === 'heading' || list[j].type === 'heading');
+  };
   ctx.actions.up = (i) => move(Number(i), -1);
   ctx.actions.down = (i) => move(Number(i), 1);
-  ctx.actions.del = (i) => { rules.splice(Number(i), 1); render(); };
-  ctx.actions.add = () => { rules.push({ label: '', words: '' }); render(); view.querySelector('.prio-rule:last-child input[name=label]')?.focus(); };
+  ctx.actions.del = (i) => {
+    const k = Number(i);
+    const wasHeading = list[k].type === 'heading';
+    list.splice(k, 1);
+    if (target === String(k)) target = '';
+    else if (target !== '' && Number(target) > k) target = String(Number(target) - 1);
+    changed(wasHeading);
+  };
+  ctx.actions.clear = async () => {
+    if (!await confirmBox('Clear the priority list?', 'Every item and heading comes off the list. Nothing changes on pick lists until you tap Save.', 'Clear', true)) return;
+    list = [];
+    target = '';
+    changed(true);
+  };
+  ctx.actions.fromRules = () => {
+    const rules = ctx.pickPriority || [];
+    const groups = rules.map((r) => ({ label: r.label, codes: [] }));
+    for (const it of items) {
+      const p = priorityOf(it.description, rules);
+      if (p < rules.length) groups[p].codes.push(it.code);
+    }
+    list = groups.filter((g) => g.codes.length).flatMap((g) => [{ type: 'heading', label: g.label }, ...g.codes.map((code) => ({ type: 'item', code }))]);
+    target = '';
+    changed(true);
+    toast('List started from the word rules. Check it, then Save.', 'ok');
+  };
   ctx.actions.save = async () => {
     try {
-      const r = await api.put('/settings/priority', { rules: asRules() });
-      ctx.pickPriority = r.pickPriority;
-      rules = r.pickPriority.map((x) => ({ label: x.label, words: x.match.join(', ') }));
+      const r = await api.put('/settings/priority-list', { list });
+      ctx.pickPriorityList = r.pickPriorityList;
+      list = (r.pickPriorityList || []).map((e) => ({ ...e }));
+      dirty = false;
+      target = '';
       render();
-      toast('Pick priority saved. Pick lists use it right away.', 'ok');
+      toast(r.pickPriorityList ? 'Priority list saved. Pick lists use it right away.' : 'List cleared. Pick lists use the word rules again.', 'ok');
     } catch (err) { toast(err.message, 'error'); }
   };
   render();

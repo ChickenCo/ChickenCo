@@ -44,13 +44,25 @@ notification. The next order entered starts a new day.
    - An item **not on the order** gives an error beep. No substitutions.
    - A **barcode the app doesn't know** asks which line it is. The link is saved
      and shows up for a supervisor to check under *Barcodes to check*.
-3. **Type code** works with the item # from the sheet (like `00439`) or the
-   numbers under a barcode.
-4. Tap any line to change the quantity, or to **Mark out** (*Out of stock* or
+3. **Items must be scanned to be added.** Adding without a scan (typing a code, tapping a
+   line and adding a quantity) needs a supervisor. The app offers two ways:
+   - **A supervisor is here:** they type their username and PIN on the picker's phone.
+   - **Send a request:** supervisors get a notification and see it under
+     *Picks to OK*. Approve adds the cases; Deny tells the picker to scan it. The line
+     shows "Waiting for supervisor OK" meanwhile.
+   Lowering a count, marking out and undoing your own last scan don't need a supervisor.
+   History shows who OK'd each unscanned pick.
+4. Tap any line to lower the quantity, or to **Mark out** (*Out of stock* or
    *Can't find*, plus how many are short).
 5. Lines printed `*OUT` on the VIP sheet come in already marked out. Scanning
    the item clears the out.
-6. When every line is picked or out, tap **Finish order**. If anything is out, it's
+6. **⏸ Pause** (above the list, or under ⋯) stops the pick clock. Choose a reason:
+   Break, Wrapping pallet, Getting a pallet of items down, Restroom, and so on, or
+   *Other…* to type one. While paused, scans are refused until you tap **Resume**.
+   Supervisors see the reason and how long on the Floor screen. Admins add or remove
+   reasons under Settings › Pause reasons. Paused time never counts in pick time or
+   pick rates.
+7. When every line is picked or out, tap **Finish order**. If anything is out, it's
    **Send to supervisor** instead. The app then offers **the next order** on the same
    truck (the lowest stop nobody has started). **Start next order** on a truck screen
    does the same.
@@ -72,8 +84,11 @@ Also on the pick screen:
   barcodes the app already knows. Finishing an order needs signal.
 - **↶ Undo** takes back the last change (a scan, a quantity, an out).
 - **Find on this order** filters a long list by name or item #.
-- **Big text** shows one item at a time in large print with **✓ Picked all**, **Skip**
-  and **Back**. The phone remembers which view each person likes.
+- **Pick time:** a finished order shows how long it took to pick, not counting pauses
+  ("Picked in 24 min (paused 10 min)"). It's also on the truck screen, Manage orders and
+  Reports › Finished orders (and its CSV).
+- **Big text** shows one item at a time in large print with **Skip** and **Back**
+  (supervisors also get **✓ Picked all**). The phone remembers which view each person likes.
 - **Notes** from drivers, supervisors and management show at the top.
 
 **Driver**
@@ -98,11 +113,12 @@ Also on the pick screen:
 - **Running out:** when the same item is marked out on 3 orders in one day,
   supervisors and management get a notification, and it's listed on the Floor screen.
 - Can add notes to orders, stores and trucks.
-- **Pick priority** (Menu) sets the order pack types appear on every pick list, e.g. 30 packs,
-  then 18 packs, then 12 packs. Each rule lists words to look for in the item description
-  ("30/12, 30 PK"). Move rules with ↑ ↓, and a preview shows which items each rule catches.
-  Pick lists are grouped under those headings, and anything not caught goes last in VIP
-  order. "2/12" doesn't catch "12/12" or "24/12", so list each one you want.
+- **Pick priority list** (Menu) sets the order items appear on every pick list. Search for
+  an item by name or item # and tap **Add** (or **Add all** shown). Add **headings** such as
+  "30 packs" or "Back wall"; pick lists group items under them. Move entries with ↑ ↓ and
+  remove them with ✕, then **Save**. Items not on the list go last, in VIP order. Until a
+  list is saved (or after it's cleared), pick lists use the older word rules (30 packs
+  first…); *Start this list from those rules* turns them into a list to edit.
 - **Edit stop** (on an order, or in Manage orders) changes the stop number, or marks the
   order as a **Cart** for small orders that don't go on a pallet. A cart shows **CART**
   instead of its stop number everywhere. Carts are listed after the numbered stops, and

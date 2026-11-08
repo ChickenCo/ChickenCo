@@ -5,8 +5,8 @@ import * as Scanner from '../scanner.js';
 import { normalizeBarcode } from '../barcode.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 import * as Wedge from '../wedge.js';
-import { groupByPriority, sortByPriority, priorityOf } from '../priority.js';
-import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, modalOpen, stopLabel, UNIT_SHORT, OUT_REASONS } from '../ui.js';
+import { groupLines, sortLines } from '../priority.js';
+import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, fmtDuration, pickTime, modalOpen, stopLabel, UNIT_SHORT, OUT_REASONS } from '../ui.js';
 
 const view = document.getElementById('view');
 
@@ -27,7 +27,7 @@ export function orderHeader(o, ctx) {
     </section>`;
 }
 
-export function lineRow(l, { act = 'line' } = {}) {
+export function lineRow(l, { act = 'line', request = null } = {}) {
   const done = l.picked + l.out_qty >= l.qty;
   const out = l.out_qty > 0;
   const cls = out ? 'out' : done ? 'done' : l.picked ? 'partial' : '';
@@ -36,7 +36,7 @@ export function lineRow(l, { act = 'line' } = {}) {
       <span class="check" aria-hidden="true">${out ? '!' : done ? '✓' : ''}</span>
       <span class="line-main">
         <span class="line-name">${esc(l.description)}</span>
-        <span class="muted small">#${esc(l.code)}${out ? ` · <b class="text-danger">OUT ${l.out_qty}${l.out_qty < l.qty ? ` of ${l.qty}` : ''} – ${esc(OUT_REASONS[l.out_reason] || '')}</b>${l.out_status === 'confirmed' ? ' ✓ confirmed' : ''}` : ''}</span>
+        <span class="muted small">#${esc(l.code)}${out ? ` · <b class="text-danger">OUT ${l.out_qty}${l.out_qty < l.qty ? ` of ${l.qty}` : ''} – ${esc(OUT_REASONS[l.out_reason] || '')}</b>${l.out_status === 'confirmed' ? ' ✓ confirmed' : ''}` : ''}${request ? ` · <b class="text-warn">Waiting for supervisor OK (+${request.to_qty - request.from_qty})</b>` : ''}</span>
       </span>
       <span class="qty">${l.picked}<small>/${l.qty} ${UNIT_SHORT[l.unit] || ''}</small></span>
     </li>`;
@@ -93,11 +93,14 @@ export async function pickView(ctx, id) {
   let bigIdx = 0;
 
   const mine = () => o.status === 'picking' && o.picker_id === ctx.user.id;
-  const canPick = () => ctx.can('picker') && (mine() || (ctx.can('supervisor') && o.status === 'picking'));
+  const canWork = () => ctx.can('picker') && (mine() || (ctx.can('supervisor') && o.status === 'picking'));
+  const paused = () => !!o.paused_at;
+  const canPick = () => canWork() && !paused();
+  const requestFor = (l) => (o.requests || []).find((r) => r.line_id === l.id);
   const remainingToPick = (l) => l.qty - l.picked;
   const lineById = (lid) => o.lines.find((l) => String(l.id) === String(lid));
   // Lines still to pick, in the supervisors' priority order (30 packs first, and so on).
-  const todoLines = () => sortByPriority(o.lines.filter((l) => l.picked + l.out_qty < l.qty), ctx.pickPriority);
+  const todoLines = () => sortLines(o.lines.filter((l) => l.picked + l.out_qty < l.qty), ctx);
   // The same item can be on an order twice: once marked *OUT by VIP and once without.
   // A scan goes to the line that still needs picking, and only to the *OUT line if that's all there is.
   const lineForCode = (code) => {
@@ -119,14 +122,17 @@ export async function pickView(ctx, id) {
     if (queue.length) banner = `<div class="banner warn">No signal. ${queue.length} change${queue.length === 1 ? ' is' : 's are'} saved on this phone and will send when you're back in range.</div>`;
     if (o.status === 'open') banner += ctx.can('picker') ? '<div class="banner">Tap <b>Start picking</b> to take this order.</div>' : '';
     else if (o.status === 'picking' && !mine()) banner += `<div class="banner warn">${esc(o.picker_name)} is picking this order${o.started_at ? ` (started ${fmtTime(o.started_at)})` : ''}.</div>`;
-    else if (o.status === 'review') banner += '<div class="banner warn">Sent to a supervisor to check the outs.</div>';
-    else if (o.status === 'done') banner += `<div class="banner ok">Order complete${o.completed_at ? ` · ${fmtTime(o.completed_at)}` : ''}${o.picker_name ? ` · picked by ${esc(o.picker_name)}` : ''}</div>`;
+    else if (o.status === 'picking' && paused()) banner += `<div class="banner warn paused-banner">⏸ <b>Paused: ${esc(o.pause_reason)}</b> · <span id="pauseTimer">${fmtDuration(Date.now() - o.paused_at)}</span>. The pick clock is stopped. Tap <b>Resume</b> to keep picking.</div>`;
+    else if (o.status === 'review') banner += `<div class="banner warn">Sent to a supervisor to check the outs.${pickTime(o) ? ` Picked in <b>${esc(pickTime(o))}</b>.` : ''}</div>`;
+    else if (o.status === 'done') banner += `<div class="banner ok">Order complete${o.completed_at ? ` · ${fmtTime(o.completed_at)}` : ''}${o.picker_name ? ` · picked by ${esc(o.picker_name)}` : ''}${pickTime(o) ? `<br>⏱ Picked in <b>${esc(pickTime(o))}</b>` : ''}</div>`;
     else if (ready) banner += `<div class="banner ok">Everything is picked or marked out. ${outs.length ? 'Send it to a supervisor to check the outs.' : 'Finish the order.'}</div>`;
 
     let bar = '';
     const undo = canPick() && undoStack.length ? '<button class="btn btn-ghost btn-undo" data-act="undo" aria-label="Undo last change">↶ Undo</button>' : '';
     if (ctx.can('picker') && (o.status === 'open' || (o.status === 'picking' && !mine() && ctx.can('supervisor')))) {
       bar = `<button class="btn btn-primary btn-scan" data-act="start">${o.status === 'open' ? 'Start picking' : 'Take over this order'}</button>`;
+    } else if (canWork() && paused()) {
+      bar = '<button class="btn btn-primary btn-scan" data-act="resume">▶ Resume picking</button>';
     } else if (canPick()) {
       bar = ready
         ? `<button class="btn btn-ghost" data-act="more">⋯</button>${undo}
@@ -144,9 +150,10 @@ export async function pickView(ctx, id) {
         <div class="row small"><span>${o.lines.length - todo.length} of ${o.lines.length} lines</span><span>${pickedUnits} of ${totalUnits} picked</span></div>
       </section>
       ${banner}
-      ${canPick() && !ready ? `<div class="view-toggle">
-        <button class="btn btn-small ${big ? 'btn-ghost' : 'btn-primary'}" data-act="bigOff">List</button>
-        <button class="btn btn-small ${big ? 'btn-primary' : 'btn-ghost'}" data-act="bigOn">Big text</button></div>` : ''}
+      ${canPick() ? `<div class="view-toggle">
+        ${ready ? '' : `<button class="btn btn-small ${big ? 'btn-ghost' : 'btn-primary'}" data-act="bigOff">List</button>
+        <button class="btn btn-small ${big ? 'btn-primary' : 'btn-ghost'}" data-act="bigOn">Big text</button>`}
+        <button class="btn btn-small btn-ghost btn-pause" data-act="pause">⏸ Pause</button></div>` : ''}
       ${big && canPick() && !ready ? '' : `<input class="search" type="search" id="lineSearch" placeholder="Find on this order: name or item #" value="${esc(search)}" autocomplete="off">`}
       ${canPick() ? '<p class="scanner-chip" id="scannerChip"></p>' : ''}
       <div id="pickLists"></div>
@@ -155,6 +162,18 @@ export async function pickView(ctx, id) {
     const input = document.getElementById('lineSearch');
     if (input) input.oninput = () => { search = input.value.trim().toLowerCase(); renderLists(); };
     renderLists();
+    startPauseTimer();
+  }
+
+  let pauseTimer = null;
+  function startPauseTimer() {
+    clearInterval(pauseTimer);
+    if (!paused()) return;
+    pauseTimer = setInterval(() => {
+      const el = document.getElementById('pauseTimer');
+      if (!el || !paused()) { clearInterval(pauseTimer); return; }
+      el.textContent = fmtDuration(Date.now() - o.paused_at);
+    }, 15000);
   }
 
   function renderScannerChip() {
@@ -177,13 +196,13 @@ export async function pickView(ctx, id) {
       const l = todo[bigIdx];
       wrap.innerHTML = `
         <section class="card big-item ${l.out_qty ? 'out' : ''}">
-          <div class="muted">Item ${bigIdx + 1} of ${todo.length} left${(() => { const p = priorityOf(l.description, ctx.pickPriority); return p < (ctx.pickPriority || []).length ? ` · <b class="group-title">${esc(ctx.pickPriority[p].label)}</b>` : ''; })()}</div>
+          <div class="muted">Item ${bigIdx + 1} of ${todo.length} left${(() => { const g = groupLines(todo, ctx); const mineG = g.find((x) => x.lines.includes(l)); return g.length > 1 && mineG ? ` · <b class="group-title">${esc(mineG.label)}</b>` : ''; })()}</div>
           <div class="big-name">${esc(l.description)}</div>
           <div class="big-code">#${esc(l.code)}</div>
           <div class="big-qty"><b>${remainingToPick(l) - l.out_qty}</b> <span>${esc(UNIT_SHORT[l.unit] || '')} to pick</span></div>
           <div class="muted">${l.picked} of ${l.qty} picked${l.out_qty ? ` · <b class="text-danger">OUT ${l.out_qty}</b>` : ''}</div>
           <div class="big-actions">
-            <button class="btn btn-primary" data-act="bigAll" data-arg="${l.id}">✓ Picked all</button>
+            ${ctx.can('supervisor') ? `<button class="btn btn-primary" data-act="bigAll" data-arg="${l.id}">✓ Picked all</button>` : '<p class="big-hint">Scan it to add</p>'}
             <button class="btn btn-ghost" data-act="line" data-arg="${l.id}">Other…</button>
           </div>
           <div class="big-nav">
@@ -198,11 +217,11 @@ export async function pickView(ctx, id) {
     const outs = o.lines.filter((l) => l.out_qty > 0 && match(l));
     const done = o.lines.filter((l) => l.picked >= l.qty && !l.out_qty && match(l));
     wrap.innerHTML = `
-      ${shownTodo.length ? `<h2 class="section-title">To pick (${shownTodo.length})</h2>${groupByPriority(shownTodo, ctx.pickPriority).map((g, i, all) => `
+      ${shownTodo.length ? `<h2 class="section-title">To pick (${shownTodo.length})</h2>${groupLines(shownTodo, ctx).map((g, i, all) => `
         ${all.length > 1 ? `<h3 class="group-title">${esc(g.label)} <span class="muted">(${g.lines.length})</span></h3>` : ''}
-        <ul class="lines">${g.lines.map((l) => lineRow(l, { act })).join('')}</ul>`).join('')}` : ''}
-      ${outs.length ? `<h2 class="section-title">Out (${outs.length})</h2><ul class="lines">${outs.map((l) => lineRow(l, { act })).join('')}</ul>` : ''}
-      ${done.length ? `<h2 class="section-title">Picked (${done.length})</h2><ul class="lines">${done.map((l) => lineRow(l, { act })).join('')}</ul>` : ''}
+        <ul class="lines">${g.lines.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>`).join('')}` : ''}
+      ${outs.length ? `<h2 class="section-title">Out (${outs.length})</h2><ul class="lines">${outs.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>` : ''}
+      ${done.length ? `<h2 class="section-title">Picked (${done.length})</h2><ul class="lines">${done.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>` : ''}
       ${search && !shownTodo.length && !outs.length && !done.length ? '<p class="muted center">Nothing on this order matches.</p>' : ''}
       ${canPick() ? '<p class="muted small center">Tap an item to change its quantity or mark it out.</p>' : ''}`;
   }
@@ -215,6 +234,10 @@ export async function pickView(ctx, id) {
   };
 
   // ---------- sending changes (or saving them for later) ----------
+  // Pickers add by scanning. Raising a count any other way needs a supervisor (the server checks too).
+  const needsOk = (kind, line, body) => kind === 'pick' && body.picked > line.picked && !ctx.can('supervisor')
+    && !(body.via === 'scan' && body.barcode) && body.via !== 'undo';
+
   async function send(kind, line, body, label) {
     const before = { picked: line.picked, out_qty: line.out_qty, out_reason: line.out_reason };
     const op = { kind, lineId: line.id, body: { ...body, at: Date.now() } };
@@ -224,8 +247,16 @@ export async function pickView(ctx, id) {
         update(await api.post(`/orders/${o.id}/lines/${line.id}/${PATHS[kind]}`, op.body));
         return true;
       } catch (err) {
-        if (err.status !== 0) { if (label) undoStack.pop(); throw err; }
+        if (err.status !== 0) {
+          if (label) undoStack.pop();
+          if (err.code === 'needs_approval') return supervisorOk(line, body, label, before);
+          throw err;
+        }
       }
+    }
+    if (needsOk(kind, line, body)) {
+      if (label) undoStack.pop();
+      throw new Error('No signal. Adding without a scan needs a supervisor, so scan the item instead (or wait for signal).');
     }
     queue.push(op);
     store.set(qKey, queue);
@@ -233,6 +264,46 @@ export async function pickView(ctx, id) {
     render();
     scheduleFlush();
     return true;
+  }
+
+  // Not scanned: a supervisor signs off on this phone, or the picker sends them a request.
+  async function supervisorOk(line, body, label, before) {
+    const n = body.picked - line.picked;
+    const how = await choose('Supervisor needed', [
+      { key: 'pin', label: 'A supervisor is here: sign off now', primary: true },
+      { key: 'request', label: 'Send a request to a supervisor' },
+      { key: 'cancel', label: "Cancel. I'll scan it." },
+    ], `Items have to be scanned. To add <b>${n} × ${esc(line.description)}</b> without scanning, a supervisor has to OK it.`);
+    if (how === 'pin') {
+      const fresh = await ask({
+        title: 'Supervisor sign-off',
+        okText: `OK adding ${n}`,
+        body: `<p class="muted">${esc(line.description)} · ${line.picked} → ${body.picked} of ${line.qty}</p>
+          <label>Supervisor username<input name="username" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+          <label>Supervisor PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off"></label>`,
+        onOk: async (f) => {
+          const username = f.elements.username.value.trim();
+          if (!username || !f.elements.pin.value) throw new Error('Enter the supervisor\'s username and PIN');
+          try {
+            return await api.post(`/orders/${o.id}/lines/${line.id}/pick`, { ...body, at: Date.now(), override: { username, pin: f.elements.pin.value } });
+          } catch (err) {
+            f.elements.pin.value = '';
+            throw err;
+          }
+        },
+      });
+      if (!fresh) return false;
+      if (label) undoStack.push({ lineId: line.id, before, label });
+      update(fresh);
+      toast('Added with supervisor OK', 'ok');
+      return true;
+    }
+    if (how === 'request') {
+      update(await api.post(`/orders/${o.id}/lines/${line.id}/request`, { picked: body.picked }));
+      toast('Request sent. It is added once a supervisor OKs it.', 'ok');
+      return false;
+    }
+    return false;
   }
 
   async function flush() {
@@ -268,7 +339,7 @@ export async function pickView(ctx, id) {
     if (!last) return;
     const b = last.before;
     try {
-      await send('pick', lineById(last.lineId), { picked: b.picked, via: 'undo' });
+      if (!await send('pick', lineById(last.lineId), { picked: b.picked, via: 'undo' })) return;
       const now = lineById(last.lineId); // fresh copy after the first step
       if (b.out_qty && (now.out_qty !== b.out_qty || now.out_reason !== b.out_reason)) {
         await send('out', now, { qty: b.out_qty, reason: b.out_reason, undo: true });
@@ -346,7 +417,9 @@ export async function pickView(ctx, id) {
     const n = await pickQty(line);
     if (!n) { say('Line up the barcode inside the box'); return; }
     try {
-      await send('pick', line, { picked: line.picked + n, via: source === 'typed' ? 'typed' : 'scan' }, `+${n} ${line.description}`);
+      const scanned = source !== 'typed';
+      const sent = await send('pick', line, { picked: line.picked + n, via: scanned ? 'scan' : 'typed', ...(scanned && { barcode: String(raw).trim(), format }) }, `+${n} ${line.description}`);
+      if (!sent) { say('Not added yet'); return; }
       const fresh = lineById(line.id);
       say(`✓ ${fresh.description}: ${fresh.picked}/${fresh.qty}${queue.length ? ' (saved on phone)' : ''}`, 'ok');
       if (!todoLines().length) {
@@ -401,13 +474,14 @@ export async function pickView(ctx, id) {
   ctx.actions.line = async (lineId) => {
     const line = lineById(lineId);
     const options = [
-      remainingToPick(line) > 0 && { key: 'add', label: 'Add picked quantity', primary: true },
+      remainingToPick(line) > 0 && { key: 'add', label: ctx.can('supervisor') ? 'Add picked quantity' : 'Add without scanning (needs a supervisor)', primary: ctx.can('supervisor') },
       { key: 'set', label: 'Set picked quantity' },
       line.qty - line.picked > 0 && !line.out_qty && { key: 'out', label: 'Mark out…', danger: true },
       line.out_qty && line.out_reason !== 'vip' && { key: 'out', label: 'Change out quantity…' },
       line.out_qty && { key: 'clear', label: 'Clear the out' },
     ].filter(Boolean);
-    const pick = await choose(line.description, options, `#${esc(line.code)} · ${line.picked} of ${line.qty} ${esc(UNIT_SHORT[line.unit] || '')} picked`);
+    const req = requestFor(line);
+    const pick = await choose(line.description, options, `#${esc(line.code)} · ${line.picked} of ${line.qty} ${esc(UNIT_SHORT[line.unit] || '')} picked${req ? `<br><b class="text-warn">Waiting for a supervisor to OK adding ${req.to_qty - req.from_qty}.</b>` : ''}${ctx.can('supervisor') ? '' : '<br>Scan the item to add it.'}`);
     try {
       if (pick === 'add') {
         const n = await pickQty(line);
@@ -432,7 +506,7 @@ export async function pickView(ctx, id) {
   ctx.actions.bigAll = async (lineId) => {
     const line = lineById(lineId);
     const n = remainingToPick(line);
-    try { await send('pick', line, { picked: line.qty, via: 'manual' }, `+${n} ${line.description}`); feedback('ok'); } catch (err) { toast(err.message, 'error'); }
+    try { if (await send('pick', line, { picked: line.qty, via: 'manual' }, `+${n} ${line.description}`)) feedback('ok'); } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.addNote = async () => {
     if (await addNote({ orderId: o.id, truck: o.truck })) ctx.refresh();
@@ -450,6 +524,7 @@ export async function pickView(ctx, id) {
     try { localStorage.setItem('wedge-seen', String(Date.now())); } catch { /* ignore */ }
     if (Scanner.isOpen()) return;
     if (modalOpen() || busy) { feedback('error'); toast('Finish the open popup first, then scan again.', 'error'); return; }
+    if (canWork() && paused()) { feedback('error'); toast('Paused. Tap Resume first, then scan.', 'error'); return; }
     if (!canPick()) {
       feedback('error');
       toast(o.status === 'open' && ctx.can('picker') ? 'Tap "Start picking" first, then scan.' : "You can't pick this order right now.", 'error');
@@ -459,10 +534,32 @@ export async function pickView(ctx, id) {
     try { await handleBarcode(code, '', 'ring'); } finally { busy = false; renderScannerChip(); }
   });
   ctx.actions.type = () => typeCode(false);
+  ctx.actions.pause = async () => {
+    const reasons = ctx.server?.pauseReasons || ['Break'];
+    let reason = await choose('Pause picking', [
+      ...reasons.map((r) => ({ key: r, label: r })),
+      { key: '__other', label: 'Other…' },
+    ], 'Why are you pausing? The pick clock stops until you tap Resume, so it doesn\'t count against your rate.');
+    if (reason === '__other') {
+      reason = await ask({
+        title: 'Pause: other reason',
+        okText: 'Pause',
+        body: '<label>Reason<input name="reason" maxlength="80" autocomplete="off"></label>',
+        onOk: (f) => { const v = f.elements.reason.value.trim(); if (!v) throw new Error('Type a reason'); return v; },
+      });
+    }
+    if (!reason) return;
+    try { update(await api.post(`/orders/${o.id}/pause`, { reason })); toast(`Paused: ${reason}`); } catch (err) { toast(err.message, 'error'); }
+  };
+  ctx.actions.resume = async () => {
+    try { update(await api.post(`/orders/${o.id}/resume`)); toast('Back to picking', 'ok'); } catch (err) { toast(err.message, 'error'); }
+  };
   ctx.actions.more = async () => {
     const pick = await choose('Order options', [
+      { key: 'pause', label: 'Pause (break, wrapping pallet…)' },
       { key: 'release', label: 'Stop picking (let someone else take it)' },
     ]);
+    if (pick === 'pause') { await ctx.actions.pause(); return; }
     if (pick === 'release' && await confirmBox('Stop picking?', 'Your progress is kept. The order goes back to "Not started" so anyone can pick it up.', 'Stop picking')) {
       try { update(await api.post(`/orders/${o.id}/release`)); } catch (err) { toast(err.message, 'error'); }
     }

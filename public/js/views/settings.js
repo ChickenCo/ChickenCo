@@ -10,6 +10,7 @@ const view = document.getElementById('view');
 export async function settingsView(ctx) {
   ctx.chrome('Settings', '#/');
   let rows = ctx.trucks.map((t) => ({ ...t }));
+  let reasons = [...(ctx.server?.pauseReasons || [])];
 
   function render() {
     const srv = ctx.server || {};
@@ -39,6 +40,15 @@ export async function settingsView(ctx) {
           `<label class="radio"><input type="checkbox" name="kegDay" value="${d}" ${(ctx.server?.kegDays || [2, 3]).includes(d) ? 'checked' : ''}> ${label}</label>`).join('')}</div>
         <button class="btn btn-ghost" data-act="saveKegs">Save keg days</button>
       </section>
+      <section class="card">
+        <h2>Pause reasons</h2>
+        <p class="muted small">What pickers can choose when they tap <b>Pause</b>. Paused time doesn't count toward pick time or pick rates. Pickers can also type their own reason under "Other…".</p>
+        <ul class="plain reason-list">${reasons.map((r, i) => `
+          <li class="row"><span>${esc(r)}</span><button class="btn btn-small btn-ghost btn-danger-text" data-act="delReason" data-arg="${i}" aria-label="Remove ${esc(r)}">✕</button></li>`).join('')}</ul>
+        <div class="add-row"><input id="newReason" maxlength="80" placeholder="New reason, e.g. Cleaning up a spill" autocomplete="off">
+          <button class="btn btn-ghost" data-act="addReason">+ Add</button></div>
+        <button class="btn btn-primary" data-act="saveReasons">Save pause reasons</button>
+      </section>
       <section class="card" id="backupBox"><h2>Backups</h2><p class="muted small">Loading…</p></section>
       <section class="card">
         <h2>Test run</h2>
@@ -57,6 +67,7 @@ export async function settingsView(ctx) {
           If the database keeps showing as created when the server started, data is being wiped on restart.</p>
       </section>`;
     loadBackups();
+    document.getElementById('newReason').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); ctx.actions.addReason(); } };
     view.querySelectorAll('.truck-row input').forEach((inp) => {
       inp.oninput = () => { const r = rows[Number(inp.closest('.truck-row').dataset.i)]; r[inp.name] = inp.name === 'truck' ? Number(inp.value) : inp.value.trim(); };
     });
@@ -69,6 +80,28 @@ export async function settingsView(ctx) {
     try {
       ctx.trucks = await api.put('/settings/trucks', { trucks: rows, warehouseDigit });
       ctx.warehouseDigit = warehouseDigit; rows = ctx.trucks.map((t) => ({ ...t })); render(); toast('Trucks saved', 'ok');
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  const keepTyped = () => document.getElementById('newReason')?.value || '';
+  ctx.actions.addReason = () => {
+    const input = document.getElementById('newReason');
+    const v = input.value.trim();
+    if (!v) { input.focus(); return; }
+    if (reasons.some((r) => r.toLowerCase() === v.toLowerCase())) { toast('That reason is already on the list', 'error'); return; }
+    reasons.push(v);
+    render();
+    document.getElementById('newReason').focus();
+  };
+  ctx.actions.delReason = (i) => { const typed = keepTyped(); reasons.splice(Number(i), 1); render(); document.getElementById('newReason').value = typed; };
+  ctx.actions.saveReasons = async () => {
+    const typed = keepTyped().trim();
+    if (typed && !reasons.includes(typed)) reasons.push(typed);
+    try {
+      const r = await api.put('/settings/pause-reasons', { reasons });
+      if (ctx.server) ctx.server.pauseReasons = r.pauseReasons;
+      reasons = [...r.pauseReasons];
+      render();
+      toast('Pause reasons saved', 'ok');
     } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.saveKegs = async () => {

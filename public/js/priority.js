@@ -40,3 +40,28 @@ export function groupByPriority(lines, rules) {
 }
 
 export const sortByPriority = (lines, rules) => groupByPriority(lines, rules).flatMap((g) => g.lines);
+
+// ---- The hand-built priority list: headings and specific items, in order (set under Pick priority). ----
+// Items not on the list go last, in VIP order.
+export function groupByList(lines, list) {
+  const rank = new Map();
+  const headingOf = new Map();
+  let heading = '';
+  (list || []).forEach((e, i) => {
+    if (e.type === 'heading') heading = e.label;
+    else if (!rank.has(e.code)) { rank.set(e.code, i); headingOf.set(e.code, heading); }
+  });
+  const sorted = lines.map((l, n) => ({ l, n, r: rank.has(l.code) ? rank.get(l.code) : Infinity }))
+    .sort((a, b) => a.r - b.r || a.n - b.n);
+  const groups = [];
+  for (const x of sorted) {
+    const label = x.r === Infinity ? 'Everything else' : headingOf.get(x.l.code) || 'Priority items';
+    if (!groups.length || groups.at(-1).label !== label) groups.push({ label, lines: [] });
+    groups.at(-1).lines.push(x.l);
+  }
+  return groups;
+}
+
+// Whichever priority is in use: the item list once a supervisor has built one, else the older word rules.
+export const groupLines = (lines, ctx) => (ctx.pickPriorityList ? groupByList(lines, ctx.pickPriorityList) : groupByPriority(lines, ctx.pickPriority));
+export const sortLines = (lines, ctx) => groupLines(lines, ctx).flatMap((g) => g.lines);

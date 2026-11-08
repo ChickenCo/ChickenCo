@@ -1,6 +1,6 @@
 // Thin wrapper around fetch for the JSON API.
 export class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
 
 async function request(method, url, body) {
@@ -18,7 +18,7 @@ async function request(method, url, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && url !== '/login') window.dispatchEvent(new Event('signed-out'));
-    throw new ApiError(res.status, data.error || `Request failed (${res.status})`);
+    throw new ApiError(res.status, data.error || `Request failed (${res.status})`, data.code);
   }
   return data;
 }
