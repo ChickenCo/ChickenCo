@@ -19,6 +19,13 @@ export async function priorityView(ctx) {
   const onList = () => new Set(list.filter((e) => e.type === 'item').map((e) => e.code));
   const nameOf = (e) => byCode.get(e.code)?.description || e.description || '(item not in the item list)';
   const headings = () => list.map((e, i) => ({ e, i })).filter((x) => x.e.type === 'heading');
+  // Sections: a heading plus the items under it (and any items above the first heading).
+  const blocks = () => {
+    const out = [];
+    list.forEach((e, i) => { if (!i || e.type === 'heading') out.push({ start: i, end: i }); else out.at(-1).end = i; });
+    out.forEach((b) => { b.end = Math.max(b.end, b.start); });
+    return out;
+  };
 
   function render() {
     const rules = ctx.pickPriority || [];
@@ -68,6 +75,10 @@ export async function priorityView(ctx) {
     const box = document.getElementById('prioList');
     if (!box) return;
     let n = 0;
+    const bl = blocks();
+    const blockAt = (i) => bl.findIndex((b) => b.start === i);
+    const canUp = (e, i) => (e.type === 'heading' ? blockAt(i) > 0 : i > 0);
+    const canDown = (e, i) => (e.type === 'heading' ? blockAt(i) < bl.length - 1 : i < list.length - 1);
     box.innerHTML = list.map((e, i) => `
       <li class="prio-entry ${e.type}">
         ${e.type === 'heading'
@@ -75,8 +86,8 @@ export async function priorityView(ctx) {
     : `<span class="prio-num">${++n}</span><span class="line-main"><span class="line-name">${esc(nameOf(e))}</span><span class="muted small">#${esc(e.code)}</span></span>`}
         <span class="btn-group">
           ${e.type === 'heading' ? `<button class="btn btn-small btn-ghost" data-act="rename" data-arg="${i}" aria-label="Rename heading">✎</button>` : ''}
-          <button class="btn btn-small btn-ghost" data-act="up" data-arg="${i}" ${i ? '' : 'disabled'} aria-label="Move up">↑</button>
-          <button class="btn btn-small btn-ghost" data-act="down" data-arg="${i}" ${i < list.length - 1 ? '' : 'disabled'} aria-label="Move down">↓</button>
+          <button class="btn btn-small btn-ghost" data-act="up" data-arg="${i}" ${canUp(e, i) ? '' : 'disabled'} aria-label="${e.type === 'heading' ? 'Move section up' : 'Move up'}">↑</button>
+          <button class="btn btn-small btn-ghost" data-act="down" data-arg="${i}" ${canDown(e, i) ? '' : 'disabled'} aria-label="${e.type === 'heading' ? 'Move section down' : 'Move down'}">↓</button>
           <button class="btn btn-small btn-ghost btn-danger-text" data-act="del" data-arg="${i}" aria-label="Remove">✕</button>
         </span>
       </li>`).join('') || '<li class="muted">Nothing on the list yet. Search above to add items.</li>';
@@ -137,10 +148,23 @@ export async function priorityView(ctx) {
     if (label) { e.label = label; changed(true); }
   };
   const move = (i, d) => {
-    const j = i + d;
-    [list[i], list[j]] = [list[j], list[i]];
-    if (target === String(i)) target = String(j); else if (target === String(j)) target = String(i);
-    changed(list[i].type === 'heading' || list[j].type === 'heading');
+    const keep = target === '' ? null : list[Number(target)];
+    if (list[i].type === 'heading') {
+      // A heading takes its whole section with it, past the neighbouring section.
+      const bl = blocks();
+      const b = bl.findIndex((x) => x.start === i);
+      const other = bl[b + d];
+      if (!other) return;
+      const [first, second] = d < 0 ? [other, bl[b]] : [bl[b], other];
+      const a = list.slice(first.start, first.end + 1);
+      const c = list.slice(second.start, second.end + 1);
+      list.splice(first.start, a.length + c.length, ...c, ...a);
+    } else {
+      const j = i + d;
+      [list[i], list[j]] = [list[j], list[i]];
+    }
+    if (keep) target = String(list.indexOf(keep));
+    changed(true);
   };
   ctx.actions.up = (i) => move(Number(i), -1);
   ctx.actions.down = (i) => move(Number(i), 1);

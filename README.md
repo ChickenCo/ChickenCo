@@ -115,8 +115,8 @@ Also on the pick screen:
 - Can add notes to orders, stores and trucks.
 - **Pick priority list** (Menu) sets the order items appear on every pick list. Search for
   an item by name or item # and tap **Add** (or **Add all** shown). Add **headings** such as
-  "30 packs" or "Back wall"; pick lists group items under them. Move entries with ↑ ↓ and
-  remove them with ✕, then **Save**. Items not on the list go last, in VIP order. Until a
+  "30 packs" or "Back wall"; pick lists group items under them. Move items with ↑ ↓; ↑ ↓ on a
+  heading moves its whole section, items included. Remove entries with ✕, then **Save**. Items not on the list go last, in VIP order. Until a
   list is saved (or after it's cleared), pick lists use the older word rules (30 packs
   first…); *Start this list from those rules* turns them into a list to edit.
 - **Stop numbers and carts (VIP imports).** Stops are numbered in loading order: VIP's last

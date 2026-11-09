@@ -1,6 +1,6 @@
 // Service worker: keeps the app shell available offline and shows push notifications.
 // App files are fetched fresh when online (so updates show up right away) and from cache when not.
-const CACHE = 'pick-shell-v16';
+const CACHE = 'pick-shell-v17';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest', '/css/styles.css',
   '/js/app.js', '/js/api.js', '/js/ui.js', '/js/scanner.js', '/js/upc.js', '/js/barcode.js', '/js/notes.js', '/js/wedge.js', '/js/priority.js',
