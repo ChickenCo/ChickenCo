@@ -59,8 +59,11 @@ function scanTime(req) {
 // Drivers can read orders and leave notes; picking needs the picker role or higher.
 const canPick = (user) => atLeast(user, 'picker');
 const canNote = (user) => user.role === 'driver' || atLeast(user, 'supervisor');
-const stopLabel = (o) => (o.is_cart ? `Cart${o.cart_no ? ` ${o.cart_no}` : ''}` : `Stop ${o.stop || '—'}`);
+const stopLabel = (o) => (o.combined ? 'Keg route' : o.is_cart ? `Cart${o.cart_no ? ` ${o.cart_no}` : ''}` : `Stop ${o.stop || '—'}`);
 const cartMax = () => getSetting('cart_max_cases', 35);
+// Keg route: combine the small orders on the keg truck/day into one order, except these stores.
+const kegRoute = () => getSetting('keg_route', { on: true, except: ['WALMART', "BUDDY'S LIQUOR"] });
+const parseJson = (s, fallback) => { try { return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
 const storeKey = (o) => String(o.account_no || o.store).trim().toUpperCase();
 
 // ---------- trucks ----------
@@ -135,7 +138,8 @@ function orderDetail(id) {
   const o = getOrder(id);
   o.lines = all(`SELECT l.*, ob.name AS out_by_name, rb.name AS reviewed_by_name FROM order_lines l
     LEFT JOIN users ob ON ob.id = l.out_by LEFT JOIN users rb ON rb.id = l.reviewed_by
-    WHERE l.order_id = ? ORDER BY l.seq`, o.id);
+    WHERE l.order_id = ? ORDER BY l.seq`, o.id).map((l) => ({ ...l, sources: parseJson(l.sources, null) }));
+  o.sources = parseJson(o.sources, null);
   o.notes = all(`SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id
     WHERE (n.scope = 'order' AND n.order_id = ?) OR (n.scope = 'store' AND n.store_key = ?)
       OR (n.scope = 'truck' AND n.truck = ? AND (n.day_id IS NULL OR n.day_id = ?))
@@ -243,6 +247,7 @@ api.get('/me', h((req) => ({
   trucks: trucks(),
   warehouseDigit: warehouseDigit(),
   kegRule: kegRule(),
+  kegRoute: kegRoute(),
   cartMax: cartMax(),
   pickPriority: pickPriority(),
   pickPriorityList: pickPriorityList(),
@@ -361,6 +366,7 @@ function readOrderBody(body) {
     unit: UNITS.includes(str(l.unit).toUpperCase()) ? str(l.unit).toUpperCase() : 'CASES',
     vipOut: !!l.vipOut,
     invoice: str(l.invoice, 20) || null,
+    sources: Array.isArray(l.sources) ? l.sources.slice(0, 100).map((x) => ({ store: str(x.store), qty: int(x.qty) || 0, invoice: str(x.invoice, 20) || null })) : null,
   }));
   if (!lines.length) fail(400, 'Add at least one item');
   lines.forEach((l, i) => {
@@ -391,10 +397,10 @@ function saveLines(orderId, lines, userId) {
            out_reason = ?, out_status = CASE WHEN ? > 0 THEN COALESCE(out_status, 'pending') ELSE NULL END WHERE id = ?`,
       i, l.code, l.description, l.qty, l.unit, picked, outQty, outReason, outQty, prev.id);
     } else {
-      run(`INSERT INTO order_lines (order_id, seq, code, description, qty, unit, out_qty, out_reason, out_status, out_by, out_at, invoice_no)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      run(`INSERT INTO order_lines (order_id, seq, code, description, qty, unit, out_qty, out_reason, out_status, out_by, out_at, invoice_no, sources)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       orderId, i, l.code, l.description, l.qty, l.unit,
-      l.vipOut ? l.qty : 0, l.vipOut ? 'vip' : null, l.vipOut ? 'pending' : null, l.vipOut ? userId : null, l.vipOut ? Date.now() : null, l.invoice);
+      l.vipOut ? l.qty : 0, l.vipOut ? 'vip' : null, l.vipOut ? 'pending' : null, l.vipOut ? userId : null, l.vipOut ? Date.now() : null, l.invoice, l.sources ? JSON.stringify(l.sources) : null);
     }
   });
   existing.filter((e) => !keep.has(e.id)).forEach((e) => run('DELETE FROM order_lines WHERE id = ?', e.id));
@@ -405,11 +411,12 @@ function createOrder(body, userId, how = 'created', { isTest = false } = {}) {
   return tx(() => {
     const cartNo = body.is_cart && int(body.cart_no) > 0 ? int(body.cart_no) : null;
     const r = run(`INSERT INTO orders (day_id, load_no, stop, store, account_no, address, city, state, day_no, order_date, zone, created_by, created_at, vip_ref, is_test,
-        is_cart, cart_no, vip_stop)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        is_cart, cart_no, vip_stop, combined, sources)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     days.openDayId(), header.load_no, header.stop, header.store, header.account_no, header.address, header.city, header.state,
     header.day_no, header.order_date, header.zone, userId, Date.now(), str(body.vip_ref, 80) || null, isTest ? 1 : 0,
-    body.is_cart ? 1 : 0, cartNo, str(body.vip_stop, 20) || null);
+    body.is_cart ? 1 : 0, cartNo, str(body.vip_stop, 20) || null, body.combined ? 1 : 0,
+    Array.isArray(body.sources) ? JSON.stringify(body.sources.slice(0, 100).map((x) => ({ store: str(x.store), account_no: str(x.account_no, 40), vip_stop: str(x.vip_stop, 20), cases: int(x.cases) || 0 }))) : null);
     const orderId = Number(r.lastInsertRowid);
     saveLines(orderId, lines, userId);
     // Delivery notes that came with the order from VIP ("cooler take to east 80").
@@ -445,9 +452,14 @@ api.post('/orders/import/preview', requireRole('management'),
     if (!input.length || (!raw && !input.trim())) fail(400, 'The file is empty');
     let parsed;
     try { parsed = vip.parseImport(input, filename, { warehouseDigit: warehouseDigit() }); } catch (err) { fail(400, err.message); }
-    const { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = vip.applyKegRule({ ...parsed, orders: parsed.orders.map((o) => ({ ...o, truck: o.truck ?? truckForLoad(o.load_no) })) }, kegRule());
+    let { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = vip.applyKegRule({ ...parsed, orders: parsed.orders.map((o) => ({ ...o, truck: o.truck ?? truckForLoad(o.load_no) })) }, kegRule());
     // VIP order records: reverse the stop numbers and put small orders on shared carts.
-    if (format === 'VIP order record') vip.arrangeLoads(orders, { cartMax: cartMax() });
+    if (format === 'VIP order record') {
+      const kr = kegRoute();
+      if (kr.on) orders = vip.combineKegRoute(orders.map((o) => ({ ...o, truck: o.truck ?? truckForLoad(o.load_no) })), { rule: kegRule(), max: cartMax(), except: kr.except });
+      vip.arrangeLoads(orders, { cartMax: cartMax() });
+      dayGroups = dayGroups?.map((d) => ({ ...d, orders: orders.filter((o) => o.day_no === d.day_no).length }));
+    }
     const day = days.displayDay();
     return {
       format, warnings, skipped, days: dayGroups,
@@ -1182,8 +1194,12 @@ api.put('/settings/kegs', requireRole('admin'), h((req) => {
   const dayList = [...new Set((Array.isArray(req.body.days) ? req.body.days : []).map(int).filter((d) => d >= 0 && d <= 6))].sort();
   const truckList = [...new Set((Array.isArray(req.body.trucks) ? req.body.trucks : []).map(int).filter((t) => trucks().some((x) => x.truck === t)))].sort((a, b) => a - b);
   setSetting('keg_rule', { trucks: truckList, days: dayList });
+  if (req.body.route) {
+    const except = [...new Set((Array.isArray(req.body.route.except) ? req.body.route.except : []).map((x) => str(x, 60).toUpperCase()).filter(Boolean))].slice(0, 50);
+    setSetting('keg_route', { on: !!req.body.route.on, except });
+  }
   changed();
-  return { kegRule: kegRule() };
+  return { kegRule: kegRule(), kegRoute: kegRoute() };
 }));
 
 // ---------- pick rates ----------
@@ -1228,11 +1244,11 @@ api.get('/reports/outs', requireRole('management'), h((req) => {
   const from = int(req.query.from) || 0;
   const to = int(req.query.to) || Date.now();
   return all(`SELECT o.id AS order_id, o.load_no, o.stop, o.is_cart, o.cart_no, o.store, o.account_no, o.order_date, o.status, l.invoice_no, l.code, l.description, l.qty,
-      l.out_qty, l.out_reason, l.out_status, l.out_at, ob.name AS out_by_name, rb.name AS reviewed_by_name, l.reviewed_at
+      l.out_qty, l.out_reason, l.out_status, l.out_at, l.sources, ob.name AS out_by_name, rb.name AS reviewed_by_name, l.reviewed_at
     FROM order_lines l JOIN orders o ON o.id = l.order_id
     LEFT JOIN users ob ON ob.id = l.out_by LEFT JOIN users rb ON rb.id = l.reviewed_by
     WHERE l.out_qty > 0 AND COALESCE(l.out_at, o.created_at) BETWEEN ? AND ?
-    ORDER BY l.out_at DESC`, from, to).map((r) => ({ ...r, truck: truckForLoad(r.load_no), reason_label: OUT_REASONS[r.out_reason] || r.out_reason }));
+    ORDER BY l.out_at DESC`, from, to).map((r) => ({ ...r, sources: parseJson(r.sources, null), truck: truckForLoad(r.load_no), reason_label: OUT_REASONS[r.out_reason] || r.out_reason }));
 }));
 
 // Which items run out most often over a period (for purchasing).
@@ -1310,8 +1326,8 @@ api.post('/trucks/:truck/arrange', requireRole('supervisor'), h((req) => {
   const truck = req.params.truck;
   if (truck !== 'all' && !trucks().some((t) => t.truck === int(truck))) fail(404, 'Unknown truck');
   const { ids } = truckOrderIds(truck);
-  const orders = ids.map((id) => one('SELECT id, load_no, stop, vip_stop, vip_ref, is_cart, cart_no FROM orders WHERE id = ?', id))
-    .filter((o) => o.vip_ref)
+  const orders = ids.map((id) => one('SELECT id, load_no, stop, vip_stop, vip_ref, is_cart, cart_no, combined FROM orders WHERE id = ?', id))
+    .filter((o) => o.vip_ref && !o.combined)
     .map((o) => ({ ...o, vip_stop: o.vip_stop || o.stop,
       lines: all("SELECT qty, out_reason = 'vip' AS vipOut FROM order_lines WHERE order_id = ?", o.id).map((l) => ({ qty: l.qty, vipOut: !!l.vipOut })) }));
   const before = new Map(orders.map((o) => [o.id, stopLabel(o)]));

@@ -394,3 +394,6 @@ td.num { text-align: right; }
 .reason-list li { padding: 6px 0; border-bottom: 1px solid var(--border); align-items: center; }
 .add-row { display: flex; gap: 8px; margin: 10px 0; }
 .add-row input { flex: 1; }
+.keg-tag { background: var(--brand); color: #fff; }
+.keg-stores { margin: 8px 0 0; }
+.line-sources { color: var(--muted); font-size: .8rem; }

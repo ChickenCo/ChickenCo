@@ -1,6 +1,6 @@
 // Management reports: every out (shortage), and finished orders with who picked them.
 import { api, qs } from '../api.js';
-import { esc, fmtTime, fmtNum, downloadCsv, ask, pickTime, stopLabel } from '../ui.js';
+import { esc, fmtTime, fmtNum, downloadCsv, ask, pickTime, stopLabel, sourcesText } from '../ui.js';
 import { dayLists } from './trucks.js';
 
 const view = document.getElementById('view');
@@ -66,7 +66,7 @@ export async function reportsView(ctx) {
         <div class="table-wrap"><table>
           <thead><tr><th>When</th><th>Truck / Stop</th><th>Store</th><th>Invoice</th><th>Item</th><th>Short</th><th>Reason</th><th>Marked by</th><th>Checked by</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
-            <td>${fmtTime(r.out_at)}</td><td>${r.truck ?? '?'} / ${esc(r.is_cart ? stopLabel(r) : r.stop)}</td><td>${esc(r.store)}</td><td>${esc(r.invoice_no || '')}</td>
+            <td>${fmtTime(r.out_at)}</td><td>${r.truck ?? '?'} / ${esc(r.is_cart || r.combined ? stopLabel(r) : r.stop)}</td><td>${esc(r.store)}${r.sources?.length ? `<br><span class="small muted">${esc(sourcesText(r.sources))}</span>` : ''}</td><td>${esc(r.invoice_no || (r.sources || []).map((x) => x.invoice).filter(Boolean).join(', '))}</td>
             <td>#${esc(r.code)} ${esc(r.description)}</td><td class="num">${r.out_qty}/${r.qty}</td><td>${esc(r.reason_label)}</td>
             <td>${r.out_reason === 'vip' ? 'VIP sheet' : esc(r.out_by_name || '')}</td>
             <td>${r.out_status === 'confirmed' ? `✓ ${esc(r.reviewed_by_name || '')}` : '<span class="text-warn">not yet</span>'}</td>
@@ -126,7 +126,7 @@ export async function reportsView(ctx) {
     if (tab === 'outs') {
       downloadCsv(`outs_${stamp}.csv`, [
         ['Marked out', 'Truck', 'Load', 'Stop', 'Store', 'Account', 'Invoice', 'Order date', 'Code', 'Description', 'Ordered', 'Short', 'Reason', 'Marked by', 'Status', 'Checked by'],
-        ...rows.map((r) => [new Date(r.out_at || 0).toLocaleString(), r.truck, r.load_no, r.is_cart ? stopLabel(r) : r.stop, r.store, r.account_no, r.invoice_no || '', r.order_date, r.code, r.description,
+        ...rows.map((r) => [new Date(r.out_at || 0).toLocaleString(), r.truck, r.load_no, r.is_cart || r.combined ? stopLabel(r) : r.stop, r.sources?.length ? `${r.store} (${sourcesText(r.sources)})` : r.store, r.account_no, r.invoice_no || (r.sources || []).map((x) => x.invoice).filter(Boolean).join(' '), r.order_date, r.code, r.description,
           r.qty, r.out_qty, r.reason_label, r.out_reason === 'vip' ? 'VIP sheet' : r.out_by_name || '', r.out_status === 'confirmed' ? 'Confirmed' : 'Not checked', r.reviewed_by_name || '']),
       ]);
     } else {

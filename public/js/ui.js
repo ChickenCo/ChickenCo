@@ -18,7 +18,7 @@ export const STATUS = {
 export const ROLE_LABEL = { driver: 'Driver', picker: 'Picker', supervisor: 'Supervisor', management: 'Management', admin: 'Admin' };
 
 // "Stop 008", or "Cart" for small orders that go on a cart instead of a pallet.
-export const stopLabel = (o) => (o.is_cart ? `Cart${o.cart_no ? ` ${o.cart_no}` : ''}` : `Stop ${o.stop || '—'}`);
+export const stopLabel = (o) => (o.combined ? 'Keg route' : o.is_cart ? `Cart${o.cart_no ? ` ${o.cart_no}` : ''}` : `Stop ${o.stop || '—'}`);
 
 export const statusPill = (s) => `<span class="pill ${STATUS[s][1]}">${STATUS[s][0]}</span>`;
 
@@ -49,6 +49,9 @@ export function pickTime(o) {
   if (!ms) return '';
   return `${fmtDuration(ms)}${o.paused_total >= 60000 ? ` (paused ${fmtDuration(o.paused_total)})` : ''}`;
 }
+
+// "KROGER 3 · 7-11 2": how a combined (keg route) line splits between stores.
+export const sourcesText = (sources) => (Array.isArray(sources) && sources.length ? sources.map((x) => `${x.store} ${x.qty}`).join(' · ') : '');
 
 export const fmtNum = (n) => Number(n || 0).toLocaleString();
 

@@ -93,8 +93,9 @@ export async function importView(ctx) {
         ${list.sort((a, b) => (a.o.is_cart ? 1 : 0) - (b.o.is_cart ? 1 : 0) || (a.o.cart_no || 0) - (b.o.cart_no || 0) || String(a.o.stop).localeCompare(String(b.o.stop), undefined, { numeric: true })).map(({ o, i }) => `
           <section class="card import-order ${picked.has(i) ? '' : 'skipped'}">
             <label class="radio import-head"><input type="checkbox" data-i="${i}" ${picked.has(i) ? 'checked' : ''}>
-              <span><b>${o.is_cart ? `<span class="cart-tag">CART ${o.cart_no || ''}</span>` : `Stop ${esc(o.stop || '—')}`} · ${esc(o.store || 'No store name')}</b>${o.vip_stop && o.vip_stop !== o.stop ? ` <span class="muted small">(VIP stop ${esc(o.vip_stop)})</span>` : ''}<br>
+              <span><b>${o.combined ? '<span class="cart-tag keg-tag">KEG ROUTE</span>' : o.is_cart ? `<span class="cart-tag">CART ${o.cart_no || ''}</span>` : `Stop ${esc(o.stop || '—')}`}${o.combined ? '' : ` · ${esc(o.store || 'No store name')}`}</b>${o.vip_stop && o.vip_stop !== o.stop ? ` <span class="muted small">(VIP stop ${esc(o.vip_stop)})</span>` : ''}<br>
               <span class="muted small">Load #${esc(o.load_no)}${o.account_no ? ` · Acct ${esc(o.account_no)}` : ''} · ${o.lines.length} lines · ${fmtNum(o.cases)} cases${o.invoices?.length ? ` · Inv ${o.invoices.map(esc).join(', ')}` : ''}</span></span></label>
+            ${o.combined ? `<p class="small">Combines ${o.sources.length} small orders, picked together: ${o.sources.map((x) => `${esc(x.store)} (${x.cases} cs)`).join(' · ')}</p>` : ''}
             ${o.duplicateOf ? "<p class=\"small text-warn\">Already imported. Unticked so it isn't added twice.</p>" : ''}
             ${o.truck ? '' : `<p class="small text-danger">Load #${esc(o.load_no)} isn't one of our trucks.</p>`}
             ${o.notes?.length ? `<p class="small">📝 ${o.notes.map(esc).join(' · ')}</p>` : ''}

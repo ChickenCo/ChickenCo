@@ -306,6 +306,56 @@ function applyKegRule(result, rule) {
   return { ...result, orders: kept, days, warnings, skipped: result.skipped || kegs ? { ...(result.skipped || {}), kegs } : result.skipped };
 }
 
+// Keg route (Truck 1's Wednesday delivery by default): every small order (cart-sized) is combined into one
+// "KEG ROUTE" order and picked together onto the same pallets. Quantities of the same item are added up;
+// each line remembers how many were for which store. Stores on the exceptions list (Walmart, Buddy's Liquor)
+// always stay their own order.
+const squash = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+function isKegRoute(o, rule) {
+  const { trucks = [], days = [] } = rule || {};
+  const wd = deliveryWeekday(o);
+  return (!trucks.length || trucks.map(Number).includes(Number(o.truck))) && wd != null && days.includes(wd);
+}
+function combineKegRoute(orders, { rule, max = 35, except = [] } = {}) {
+  const cases = (o) => o.lines.filter((l) => !l.vipOut).reduce((s, l) => s + l.qty, 0);
+  const skip = except.map(squash).filter(Boolean);
+  const byLoad = new Map();
+  for (const o of orders) {
+    if (o.combined || !isKegRoute(o, rule) || cases(o) > max || skip.some((x) => squash(o.store).includes(x))) continue;
+    if (!byLoad.has(o.load_no)) byLoad.set(o.load_no, []);
+    byLoad.get(o.load_no).push(o);
+  }
+  let out = orders;
+  for (const [load, small] of byLoad) {
+    if (small.length < 2) continue;
+    small.sort((a, b) => (parseInt(a.stop, 10) || 0) - (parseInt(b.stop, 10) || 0));
+    const lines = new Map();
+    for (const o of small) {
+      for (const l of o.lines) {
+        const key = `${l.code}|${l.vipOut ? 1 : 0}`;
+        if (!lines.has(key)) lines.set(key, { code: l.code, description: l.description, unit: l.unit, vipOut: !!l.vipOut, qty: 0, invoice: null, sources: [] });
+        const m = lines.get(key);
+        m.qty += l.qty;
+        const src = m.sources.find((x) => x.store === o.store);
+        if (src) src.qty += l.qty; else m.sources.push({ store: o.store, qty: l.qty, invoice: l.invoice || null });
+      }
+    }
+    const date = small.map((o) => o.order_date).filter(Boolean).sort().at(-1) || '';
+    const combined = {
+      load_no: load, day_no: small[0].day_no, truck: small[0].truck, stop: '', store: 'KEG ROUTE',
+      account_no: '', address: '', city: '', state: '', zone: '', order_date: date, dayName: small[0].dayName,
+      invoices: [...new Set(small.flatMap((o) => o.invoices || []))],
+      notes: small.flatMap((o) => (o.notes || []).map((n) => `${o.store}: ${n}`)),
+      lines: [...lines.values()],
+      vip_ref: `kegroute:${load}:${date}`,
+      combined: true,
+      sources: small.map((o) => ({ store: o.store, account_no: o.account_no, vip_stop: o.stop, cases: cases(o) })),
+    };
+    out = [...out.filter((o) => !small.includes(o)), combined];
+  }
+  return out;
+}
+
 // VIP numbers stops in delivery order, but the truck is loaded last stop first. Per load:
 //  - orders of cartMax cases or fewer go on shared carts (several small stores to a cart, up to cartMax cases each);
 //  - the remaining (pallet) orders are renumbered in reverse: VIP's last stop becomes Stop 001.
@@ -314,6 +364,7 @@ function arrangeLoads(orders, { cartMax = 35 } = {}) {
   const cases = (o) => o.lines.filter((l) => !l.vipOut).reduce((s, l) => s + l.qty, 0);
   const byLoad = new Map();
   for (const o of orders) {
+    if (o.combined) continue; // the keg route order has no stop of its own
     o.vip_stop = o.vip_stop ?? o.stop;
     if (!byLoad.has(o.load_no)) byLoad.set(o.load_no, []);
     byLoad.get(o.load_no).push(o);
@@ -355,4 +406,4 @@ function parseImport(input, filename = '', opts = {}) {
   return parseVipText(text);
 }
 
-module.exports = { arrangeLoads, parseImport, parseVipText, parseCsv, parseOrderRecord, applyKegRule, deliveryWeekday, loadParts, upcOf };
+module.exports = { combineKegRoute, isKegRoute, arrangeLoads, parseImport, parseVipText, parseCsv, parseOrderRecord, applyKegRule, deliveryWeekday, loadParts, upcOf };

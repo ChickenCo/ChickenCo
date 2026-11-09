@@ -179,6 +179,11 @@ if (!all('PRAGMA table_info(order_lines)').some((c) => c.name === 'invoice_no'))
 db.exec('CREATE INDEX IF NOT EXISTS orders_vip_ref ON orders(vip_ref)');
 // Small orders that ride on a cart instead of a pallet show "Cart" instead of a stop number.
 if (!all('PRAGMA table_info(orders)').some((c) => c.name === 'is_cart')) db.exec('ALTER TABLE orders ADD COLUMN is_cart INTEGER NOT NULL DEFAULT 0');
+// Keg route: one combined order (combined = 1) made of several small stores (sources = JSON list);
+// each combined line's sources says how many cases were for which store.
+for (const [table, col, type] of [['orders', 'combined', 'INTEGER NOT NULL DEFAULT 0'], ['orders', 'sources', 'TEXT'], ['order_lines', 'sources', 'TEXT']]) {
+  if (!all(`PRAGMA table_info(${table})`).some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+}
 // Carts: several small orders share one cart (cart_no). vip_stop is VIP's own stop number before renumbering.
 for (const [col, type] of [['cart_no', 'INTEGER'], ['vip_stop', 'TEXT']]) {
   if (!all('PRAGMA table_info(orders)').some((c) => c.name === col)) db.exec(`ALTER TABLE orders ADD COLUMN ${col} ${type}`);

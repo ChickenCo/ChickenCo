@@ -43,6 +43,10 @@ export async function settingsView(ctx) {
         <p class="small"><b>Delivery days</b></p>
         <div class="keg-days">${[[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat']].map(([d, label]) =>
           `<label class="radio"><input type="checkbox" name="kegDay" value="${d}" ${(ctx.server?.kegRule?.days || [3]).includes(d) ? 'checked' : ''}> ${label}</label>`).join('')}</div>
+        <p class="small"><b>Keg route</b></p>
+        <label class="radio"><input type="checkbox" id="kegRouteOn" ${ctx.server?.kegRoute?.on !== false ? 'checked' : ''}> Combine the small orders on the keg route into one <b>KEG ROUTE</b> order</label>
+        <p class="muted small">On the trucks and days above, every order of ${esc(ctx.server?.cartMax ?? 35)} cases or fewer (the cart size, under Stops and carts) is added together into one order, picked onto the same pallets. Each line shows how many are for which store. These stores always stay their own order (one per line):</p>
+        <textarea id="kegExcept" rows="3" autocapitalize="characters">${esc((ctx.server?.kegRoute?.except || ['WALMART', "BUDDY'S LIQUOR"]).join('\n'))}</textarea>
         <button class="btn btn-ghost" data-act="saveKegs">Save keg rule</button>
       </section>
       <section class="card">
@@ -137,8 +141,9 @@ export async function settingsView(ctx) {
     const trucks = [...view.querySelectorAll('input[name=kegTruck]:checked')].map((b) => Number(b.value));
     if (!trucks.length && !await confirmBox('Kegs for every truck?', 'No truck is ticked, so kegs will go on every truck delivering on the ticked days.', 'Save')) return;
     try {
-      const r = await api.put('/settings/kegs', { days, trucks });
-      if (ctx.server) ctx.server.kegRule = r.kegRule;
+      const route = { on: document.getElementById('kegRouteOn').checked, except: document.getElementById('kegExcept').value.split('\n').map((x) => x.trim()).filter(Boolean) };
+      const r = await api.put('/settings/kegs', { days, trucks, route });
+      if (ctx.server) { ctx.server.kegRule = r.kegRule; ctx.server.kegRoute = r.kegRoute; }
       toast('Keg rule saved. It applies to the next VIP import.', 'ok');
     } catch (err) { toast(err.message, 'error'); }
   };

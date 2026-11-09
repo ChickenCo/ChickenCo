@@ -79,3 +79,55 @@ test('a truck can be re-arranged after import, and the cart size is a setting', 
   const moved = await call('PUT', `/orders/${walmart.id}/stop`, { cart: true, cartNo: 2 });
   assert.equal(moved.cart_no, 2);
 });
+
+test('keg route: small orders on the keg truck and day become one KEG ROUTE order, except Walmart and Buddy\'s', async () => {
+  const wed = '11/11/26'; // a Wednesday
+  const mk = (stop, store, items, extra = {}) => ({ load_no: '301', truck: 1, stop, store, order_date: wed, notes: [], invoices: [`9${stop}`],
+    lines: items.map(([code, qty]) => ({ code, description: `ITEM ${code}`, qty, unit: 'CASES', invoice: `9${stop}` })), ...extra });
+  const orders = [
+    mk('001', "KROGER'S # 409", [['00735', 10], ['00439', 2]], { notes: ['back door'] }),
+    mk('002', '7-11 # 047140', [['00735', 5], ['00125', 3]]),
+    mk('003', 'WALMART # 1113', [['00735', 8]]),
+    mk('004', "BUDDY'S LIQUOR", [['00735', 4]]),
+    mk('005', 'BIG STORE', [['00735', 80]]),
+    { ...mk('006', 'OTHER TRUCK', [['00735', 3]]), truck: 2, load_no: '302' },
+  ];
+  const rule = { trucks: [1], days: [3] };
+  const out = vip.combineKegRoute(orders, { rule, max: 35, except: ['WALMART', "BUDDY'S LIQUOR"] });
+  const keg = out.find((o) => o.combined);
+  assert.equal(keg.store, 'KEG ROUTE');
+  assert.deepEqual(keg.sources.map((x) => [x.store, x.cases]), [["KROGER'S # 409", 12], ['7-11 # 047140', 8]]);
+  const bud = keg.lines.find((l) => l.code === '00735');
+  assert.equal(bud.qty, 15, 'the same item is added up');
+  assert.deepEqual(bud.sources.map((x) => [x.store, x.qty]), [["KROGER'S # 409", 10], ['7-11 # 047140', 5]]);
+  assert.deepEqual(keg.notes, ["KROGER'S # 409: back door"]);
+  assert.deepEqual(out.filter((o) => !o.combined).map((o) => o.store).sort(), ['BIG STORE', "BUDDY'S LIQUOR", 'OTHER TRUCK', 'WALMART # 1113']);
+  // Not the keg day: nothing is combined.
+  assert.equal(vip.combineKegRoute(orders.map((o) => ({ ...o, order_date: '11/10/26' })), { rule, max: 35 }).length, orders.length);
+
+  // Saved through the API with each line's per-store split.
+  let cookie = '';
+  const call = async (method, url, body) => {
+    const res = await fetch(base + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
+    const data = await res.json().catch(() => ({}));
+    assert.ok(res.status < 300, `${method} ${url} -> ${res.status} ${JSON.stringify(data)}`);
+    return data;
+  };
+  await call('POST', '/login', { username: 'admin', pin: '1470' });
+  const r = await call('POST', '/orders/import', { orders: [keg] });
+  assert.equal(r.created, 1);
+  const list = await call('GET', '/orders?truck=1');
+  const saved = await call('GET', `/orders/${list.find((o) => o.combined).id}`);
+  assert.equal(saved.combined, 1);
+  assert.equal(saved.sources.length, 2);
+  assert.deepEqual(saved.lines.find((l) => l.code === '00735').sources.map((x) => x.qty), [10, 5]);
+  assert.equal((await call('POST', '/orders/import', { orders: [keg] })).created, 0, 'importing the keg route twice is blocked');
+  assert.equal((await call('POST', '/trucks/1/arrange')).orders >= 0, true);
+  const after = await call('GET', `/orders/${saved.id}`);
+  assert.equal(after.store, 'KEG ROUTE');
+  assert.equal(after.is_cart, 0, 'redoing stops leaves the keg route alone');
+  const s = await call('PUT', '/settings/kegs', { trucks: [1], days: [3], route: { on: true, except: ['Walmart', 'buddys liquor'] } });
+  assert.deepEqual(s.kegRoute, { on: true, except: ['WALMART', 'BUDDYS LIQUOR'] });
+});

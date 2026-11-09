@@ -152,6 +152,12 @@ Also on the pick screen:
   - **Kegs:** keg lines are only picked for **Truck 1's Wednesday delivery** (imported and
     picked on Tuesday). Every other truck and day has its keg lines left off. Change the
     trucks and delivery days under Settings › Kegs.
+  - **Keg route:** on that truck and day, every order of cart size or smaller (35 cases by
+    default) is combined into one **KEG ROUTE** order, picked together onto the same pallets.
+    The same item is added up across stores, and each line shows the split ("EC PORTER 6 ·
+    DOLLAR GENERAL 2") so an out can be traced to the right store; Reports › Outs shows the
+    split and invoices too. Walmart and Buddy's Liquor always stay their own orders. The
+    exceptions list and an on/off switch are under Settings › Kegs.
   - **Notes:** invoice messages ("cooler take to east 80") become notes on the order.
   - **Stock-outs:** a regular invoice line VIP didn't pick comes in marked *OUT, as
     before (it can still be picked if found). If the same item is also on the order

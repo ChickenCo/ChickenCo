@@ -6,7 +6,7 @@ import { normalizeBarcode } from '../barcode.js';
 import { notesHtml, addNote, deleteNote } from '../notes.js';
 import * as Wedge from '../wedge.js';
 import { groupLines, sortLines } from '../priority.js';
-import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, fmtDuration, pickTime, modalOpen, stopLabel, UNIT_SHORT, OUT_REASONS } from '../ui.js';
+import { esc, toast, feedback, ask, askQty, choose, confirmBox, statusPill, fmtTime, fmtDuration, pickTime, sourcesText, modalOpen, stopLabel, UNIT_SHORT, OUT_REASONS } from '../ui.js';
 
 const view = document.getElementById('view');
 
@@ -17,13 +17,15 @@ export function orderHeader(o, ctx) {
       <div class="muted small">${esc([o.address, o.city, o.state].filter(Boolean).join(', '))}</div>
       <div class="facts">
         <span><b>${esc(ctx.truckName(o.truck))}</b> · Load #${esc(o.load_no)}</span>
-        <span>${o.is_cart ? `<b class="cart-tag">CART${o.cart_no ? ` ${o.cart_no}` : ''}</b>` : `Stop <b>${esc(o.stop || '—')}</b>`}${o.vip_stop && o.vip_stop !== o.stop ? `<span class="muted small">VIP stop ${esc(o.vip_stop)}</span>` : ''}</span>
-        ${ctx.can('supervisor') ? '<button class="link-btn" data-act="editStop">Edit stop</button>' : ''}
+        ${o.combined ? '<span><b class="cart-tag keg-tag">KEG ROUTE</b></span>' : ''}
+        <span ${o.combined ? 'hidden' : ''}>${o.is_cart ? `<b class="cart-tag">CART${o.cart_no ? ` ${o.cart_no}` : ''}</b>` : `Stop <b>${esc(o.stop || '—')}</b>`}${o.vip_stop && o.vip_stop !== o.stop ? `<span class="muted small">VIP stop ${esc(o.vip_stop)}</span>` : ''}</span>
+        ${ctx.can('supervisor') && !o.combined ? '<button class="link-btn" data-act="editStop">Edit stop</button>' : ''}
         ${o.day_no ? `<span>Day ${esc(o.day_no)}</span>` : ''}
         ${o.order_date ? `<span>${esc(o.order_date)}</span>` : ''}
         ${o.zone ? `<span>Zone ${esc(o.zone)}</span>` : ''}
         ${o.account_no ? `<span>Acct ${esc(o.account_no)}</span>` : ''}
       </div>
+      ${o.combined && o.sources?.length ? `<p class="small keg-stores"><b>${o.sources.length} stores, picked together onto the same pallets:</b> ${o.sources.map((x) => `${esc(x.store)} (${x.cases})`).join(' · ')}</p>` : ''}
     </section>`;
 }
 
@@ -36,7 +38,7 @@ export function lineRow(l, { act = 'line', request = null } = {}) {
       <span class="check" aria-hidden="true">${out ? '!' : done ? '✓' : ''}</span>
       <span class="line-main">
         <span class="line-name">${esc(l.description)}</span>
-        <span class="muted small">#${esc(l.code)}${out ? ` · <b class="text-danger">OUT ${l.out_qty}${l.out_qty < l.qty ? ` of ${l.qty}` : ''} – ${esc(OUT_REASONS[l.out_reason] || '')}</b>${l.out_status === 'confirmed' ? ' ✓ confirmed' : ''}` : ''}${request ? ` · <b class="text-warn">Waiting for supervisor OK (+${request.to_qty - request.from_qty})</b>` : ''}</span>
+        <span class="muted small">#${esc(l.code)}${out ? ` · <b class="text-danger">OUT ${l.out_qty}${l.out_qty < l.qty ? ` of ${l.qty}` : ''} – ${esc(OUT_REASONS[l.out_reason] || '')}</b>${l.out_status === 'confirmed' ? ' ✓ confirmed' : ''}` : ''}${l.sources?.length > 1 ? `<br><span class="line-sources">${esc(sourcesText(l.sources))}</span>` : ''}${request ? ` · <b class="text-warn">Waiting for supervisor OK (+${request.to_qty - request.from_qty})</b>` : ''}</span>
       </span>
       <span class="qty">${l.picked}<small>/${l.qty} ${UNIT_SHORT[l.unit] || ''}</small></span>
     </li>`;

@@ -99,10 +99,10 @@ export async function truckView(ctx, truck) {
       return `
         <a class="card order-card status-${o.status}" href="#/${o.status === 'review' && ctx.can('supervisor') ? 'review' : 'order'}/${o.id}">
           <div class="row">
-            <span class="stop">${seq ? `<span class="load-seq">${seq}</span>` : ''}${o.is_cart ? `<span class="cart-tag">CART${o.cart_no ? ` ${o.cart_no}` : ''}</span>` : `Stop ${esc(o.stop || '—')}`}</span>
+            <span class="stop">${seq ? `<span class="load-seq">${seq}</span>` : ''}${o.combined ? '<span class="cart-tag keg-tag">KEG ROUTE</span>' : o.is_cart ? `<span class="cart-tag">CART${o.cart_no ? ` ${o.cart_no}` : ''}</span>` : `Stop ${esc(o.stop || '—')}`}</span>
             ${statusPill(o.status)}
           </div>
-          <strong class="store">${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</strong>
+          <strong class="store" ${o.combined ? 'hidden' : ''}>${esc(o.store)}${o.is_test ? ' <span class="pill">TEST</span>' : ''}</strong>
           <div class="muted small">${esc([o.address, o.city, o.state].filter(Boolean).join(', '))}</div>
           <div class="progress"><span style="width:${pct(done, o.units)}%"></span></div>
           <div class="row small muted">
