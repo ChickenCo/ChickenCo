@@ -35,10 +35,15 @@ export async function settingsView(ctx) {
       </section>
       <section class="card">
         <h2>Kegs</h2>
-        <p class="muted small">Kegs are only put on pick lists for trucks due on these days. On other days, keg lines from VIP are left off.</p>
+        <p class="muted small">Kegs only go on pick lists for these trucks, when the truck <b>delivers</b> on these days. Everywhere else, keg lines from VIP are left off.
+          Example: Truck 1 + Wed means kegs come in on Tuesday's import and get picked Tuesday for Wednesday's delivery.</p>
+        <p class="small"><b>Trucks</b></p>
+        <div class="keg-days">${ctx.trucks.map((t) =>
+          `<label class="radio"><input type="checkbox" name="kegTruck" value="${t.truck}" ${(ctx.server?.kegRule?.trucks || [1]).includes(t.truck) ? 'checked' : ''}> Truck ${t.truck}</label>`).join('')}</div>
+        <p class="small"><b>Delivery days</b></p>
         <div class="keg-days">${[[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat']].map(([d, label]) =>
-          `<label class="radio"><input type="checkbox" name="kegDay" value="${d}" ${(ctx.server?.kegDays || [2, 3]).includes(d) ? 'checked' : ''}> ${label}</label>`).join('')}</div>
-        <button class="btn btn-ghost" data-act="saveKegs">Save keg days</button>
+          `<label class="radio"><input type="checkbox" name="kegDay" value="${d}" ${(ctx.server?.kegRule?.days || [3]).includes(d) ? 'checked' : ''}> ${label}</label>`).join('')}</div>
+        <button class="btn btn-ghost" data-act="saveKegs">Save keg rule</button>
       </section>
       <section class="card">
         <h2>Stops and carts</h2>
@@ -129,10 +134,12 @@ export async function settingsView(ctx) {
   };
   ctx.actions.saveKegs = async () => {
     const days = [...view.querySelectorAll('input[name=kegDay]:checked')].map((b) => Number(b.value));
+    const trucks = [...view.querySelectorAll('input[name=kegTruck]:checked')].map((b) => Number(b.value));
+    if (!trucks.length && !await confirmBox('Kegs for every truck?', 'No truck is ticked, so kegs will go on every truck delivering on the ticked days.', 'Save')) return;
     try {
-      const r = await api.put('/settings/kegs', { days });
-      if (ctx.server) ctx.server.kegDays = r.kegDays;
-      toast('Keg days saved', 'ok');
+      const r = await api.put('/settings/kegs', { days, trucks });
+      if (ctx.server) ctx.server.kegRule = r.kegRule;
+      toast('Keg rule saved. It applies to the next VIP import.', 'ok');
     } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.demo = async () => {

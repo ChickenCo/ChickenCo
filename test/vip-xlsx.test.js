@@ -144,6 +144,12 @@ test('management uploads the file, imports one day, and re-importing is blocked'
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const json = (m, u, b) => fetch(base + u, { method: m, headers: { 'content-type': 'application/json', cookie }, body: b && JSON.stringify(b) }).then((r) => r.json());
 
+  const preview0 = await fetch(`${base}/orders/import/preview`, {
+    method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-filename': 'orderrecord.xlsx', cookie }, body: makeXlsx(ROWS),
+  }).then((r) => r.json());
+  assert.ok(!preview0.orders.some((o) => o.store === 'TEST TAVERN'), 'by default only Truck 1 gets kegs, for Wednesday delivery');
+  // This file's keg is on Truck 6 for Tuesday, so allow that.
+  assert.deepEqual((await json('PUT', '/settings/kegs', { trucks: [6], days: [2] })).kegRule, { trucks: [6], days: [2] });
   const res = await fetch(`${base}/orders/import/preview`, {
     method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-filename': 'orderrecord.xlsx', cookie }, body: makeXlsx(ROWS),
   });
@@ -202,6 +208,12 @@ test('kegs are only kept for trucks due on keg days (Tuesday and Wednesday by de
   assert.equal(wedOnly.skipped.kegs, 1);
   assert.match(wedOnly.warnings.at(-1), /only kegs/);
   assert.equal(wedOnly.days.find((d) => d.day_no === '2').cases, 12);
+  // Only the listed trucks get kegs, and only on the listed delivery days.
+  const tavern = parsed.orders.find((o) => o.store === 'TEST TAVERN');
+  const onTruck = applyKegRule(parsed, { trucks: [tavern.truck], days: [2] });
+  assert.ok(onTruck.orders.some((o) => o.store === 'TEST TAVERN'), "the keg truck's order keeps its kegs");
+  const otherTruck = applyKegRule(parsed, { trucks: [tavern.truck + 1], days: [2] });
+  assert.ok(!otherTruck.orders.some((o) => o.store === 'TEST TAVERN'), 'other trucks lose their kegs, even on a keg day');
 });
 
 test('a test or demo order for the same store never blocks the real VIP import', async () => {

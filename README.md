@@ -149,8 +149,9 @@ Also on the pick screen:
   - **Picked only:** only lines VIP marks *Picked* with a positive quantity become
     picks. Returns, credits and price corrections are left out, along with tax and
     service charges ("MISC SER CHG"), empties and voided lines.
-  - **Kegs:** keg lines are only picked for trucks due on **Tuesday or Wednesday**. On
-    other days they're left off. The days can be changed under Settings › Kegs.
+  - **Kegs:** keg lines are only picked for **Truck 1's Wednesday delivery** (imported and
+    picked on Tuesday). Every other truck and day has its keg lines left off. Change the
+    trucks and delivery days under Settings › Kegs.
   - **Notes:** invoice messages ("cooler take to east 80") become notes on the order.
   - **Stock-outs:** a regular invoice line VIP didn't pick comes in marked *OUT, as
     before (it can still be picked if found). If the same item is also on the order

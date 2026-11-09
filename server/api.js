@@ -70,7 +70,8 @@ const DEFAULT_TRUCKS = [1, 2, 3, 4, 5, 6].map((n) => ({ truck: n, load: String(2
 const trucks = () => getSetting('trucks', DEFAULT_TRUCKS);
 const warehouseDigit = () => getSetting('warehouse_digit', '0');
 // Delivery weekdays (0 = Sunday) whose trucks get kegs picked; other days' keg lines are left off.
-const kegDays = () => getSetting('keg_days', [2, 3]);
+// Kegs: only these trucks on these delivery weekdays get them (default: Truck 1, Wednesday delivery).
+const kegRule = () => getSetting('keg_rule', { trucks: [1], days: [3] });
 // Pick priority set by supervisors: pack types at the top of every pick list, in order.
 const DEFAULT_PRIORITY = [
   { label: '30 packs', match: ['30/12', '30 PK', '30PK', '30 PACK'] },
@@ -241,7 +242,7 @@ api.get('/me', h((req) => ({
   user: req.user,
   trucks: trucks(),
   warehouseDigit: warehouseDigit(),
-  kegDays: kegDays(),
+  kegRule: kegRule(),
   cartMax: cartMax(),
   pickPriority: pickPriority(),
   pickPriorityList: pickPriorityList(),
@@ -444,7 +445,7 @@ api.post('/orders/import/preview', requireRole('management'),
     if (!input.length || (!raw && !input.trim())) fail(400, 'The file is empty');
     let parsed;
     try { parsed = vip.parseImport(input, filename, { warehouseDigit: warehouseDigit() }); } catch (err) { fail(400, err.message); }
-    const { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = vip.applyKegRule(parsed, kegDays());
+    const { orders, warnings, days: dayGroups = null, skipped = null, barcodes = [], format = null } = vip.applyKegRule({ ...parsed, orders: parsed.orders.map((o) => ({ ...o, truck: o.truck ?? truckForLoad(o.load_no) })) }, kegRule());
     // VIP order records: reverse the stop numbers and put small orders on shared carts.
     if (format === 'VIP order record') vip.arrangeLoads(orders, { cartMax: cartMax() });
     const day = days.displayDay();
@@ -1178,10 +1179,11 @@ api.put('/settings/carts', requireRole('admin'), h((req) => {
 }));
 
 api.put('/settings/kegs', requireRole('admin'), h((req) => {
-  const list = (Array.isArray(req.body.days) ? req.body.days : []).map(int).filter((d) => d >= 0 && d <= 6);
-  setSetting('keg_days', [...new Set(list)].sort());
+  const dayList = [...new Set((Array.isArray(req.body.days) ? req.body.days : []).map(int).filter((d) => d >= 0 && d <= 6))].sort();
+  const truckList = [...new Set((Array.isArray(req.body.trucks) ? req.body.trucks : []).map(int).filter((t) => trucks().some((x) => x.truck === t)))].sort((a, b) => a - b);
+  setSetting('keg_rule', { trucks: truckList, days: dayList });
   changed();
-  return { kegDays: kegDays() };
+  return { kegRule: kegRule() };
 }));
 
 // ---------- pick rates ----------

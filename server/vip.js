@@ -279,13 +279,18 @@ function deliveryWeekday(o) {
   return d >= 1 && d <= 7 ? d % 7 : null;
 }
 
-// Kegs are only picked for trucks due on certain days (Tuesday and Wednesday by default).
-function applyKegRule(result, kegDays) {
-  const allowed = new Set(kegDays);
+// Kegs are only picked for certain trucks on certain delivery days
+// (Perry: Truck 1's Wednesday delivery, picked on Tuesday). No trucks listed = any truck.
+// `rule` is { trucks, days } (days are delivery weekdays, 0 = Sunday), or just a list of days.
+function applyKegRule(result, rule) {
+  const { trucks = [], days: kegDays = [] } = Array.isArray(rule) ? { days: rule } : rule || {};
+  const allowedDays = new Set(kegDays);
+  const allowedTrucks = new Set(trucks.map(Number));
   let kegs = 0;
   const orders = result.orders.map((o) => {
     const wd = deliveryWeekday(o);
-    if (wd == null || allowed.has(wd)) return o;
+    const truckOk = !allowedTrucks.size || allowedTrucks.has(Number(o.truck));
+    if (truckOk && (wd == null || allowedDays.has(wd))) return o;
     const lines = o.lines.filter((l) => l.unit !== 'KEGS');
     kegs += o.lines.length - lines.length;
     return lines.length === o.lines.length ? o : { ...o, lines };
@@ -293,7 +298,7 @@ function applyKegRule(result, kegDays) {
   const kept = orders.filter((o) => o.lines.length);
   const emptied = orders.length - kept.length;
   const warnings = [...(result.warnings || [])];
-  if (emptied) warnings.push(`${emptied} order${emptied === 1 ? ' had' : 's had'} only kegs on a day kegs aren't picked and ${emptied === 1 ? 'was' : 'were'} left out.`);
+  if (emptied) warnings.push(`${emptied} order${emptied === 1 ? ' had' : 's had'} only kegs, on a truck or day that doesn't get kegs, and ${emptied === 1 ? 'was' : 'were'} left out.`);
   const days = result.days?.map((d) => {
     const mine = kept.filter((o) => o.day_no === d.day_no);
     return { ...d, orders: mine.length, cases: mine.reduce((s, o) => s + o.lines.reduce((t, l) => t + l.qty, 0), 0) };
