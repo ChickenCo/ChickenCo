@@ -160,7 +160,7 @@ export async function truckView(ctx, truck) {
   ctx.actions.addNote = async () => { if (await addNote({ truck: Number(truck) })) render(); };
   ctx.actions.delNote = async (id) => { if (await deleteNote(id)) render(); };
   ctx.actions.arrange = async () => {
-    if (!await confirmBox('Redo stop numbers and carts?', `Imported VIP orders on Truck ${truck} are renumbered so the last delivery is Stop 1, and orders of ${ctx.server?.cartMax ?? 35} cases or fewer are put on shared carts. Stop numbers or carts changed by hand on these orders are replaced. Orders typed in by hand aren't changed.`, 'Redo')) return;
+    if (!await confirmBox('Redo stop numbers and carts?', `Imported VIP orders on Truck ${truck} are renumbered so the last delivery is Stop 1, and orders of ${ctx.server?.cartOrderMax ?? 31} cases or fewer are spread evenly over shared carts. Stop numbers or carts changed by hand on these orders are replaced. Orders typed in by hand aren't changed.`, 'Redo')) return;
     try {
       const r = await api.post(`/trucks/${truck}/arrange`);
       toast(r.orders ? `${r.moved} of ${r.orders} orders changed · ${r.carts} cart${r.carts === 1 ? '' : 's'}` : 'No imported VIP orders on this truck', 'ok');

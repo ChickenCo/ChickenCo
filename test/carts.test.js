@@ -131,3 +131,19 @@ test('keg route: small orders on the keg truck and day become one KEG ROUTE orde
   const s = await call('PUT', '/settings/kegs', { trucks: [1], days: [3], route: { on: true, except: ['Walmart', 'buddys liquor'] } });
   assert.deepEqual(s.kegRoute, { on: true, except: ['WALMART', 'BUDDYS LIQUOR'] });
 });
+
+test('32 cases or more is a pallet, and carts are spread evenly', () => {
+  const sizes = [31, 32, 20, 18, 15, 12, 10, 8];
+  const orders = sizes.map((n, i) => order('201', String(i + 1).padStart(3, '0'), `S${n}`, n));
+  vip.arrangeLoads(orders, { orderMax: 31, cartCap: 35 });
+  const by = Object.fromEntries(orders.map((o) => [o.store, o]));
+  assert.equal(by.S32.is_cart, false, '32 cases goes on a pallet');
+  assert.equal(by.S31.is_cart, true, '31 cases goes on a cart');
+  const loads = new Map();
+  for (const o of orders.filter((x) => x.is_cart)) loads.set(o.cart_no, (loads.get(o.cart_no) || 0) + Number(o.store.slice(1)));
+  const cs = [...loads.values()].sort((a, b) => a - b);
+  // 114 cases over 35-case carts: 4 carts, each within a few cases of the others.
+  assert.equal(cs.length, 4);
+  assert.ok(cs.every((n) => n <= 35));
+  assert.ok(cs.at(-1) - cs[0] <= 6, `carts are close in size: ${cs}`);
+});

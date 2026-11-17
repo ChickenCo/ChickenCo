@@ -218,12 +218,16 @@ export async function pickView(ctx, id) {
     const shownTodo = todo.filter(match);
     const outs = o.lines.filter((l) => l.out_qty > 0 && match(l));
     const done = o.lines.filter((l) => l.picked >= l.qty && !l.out_qty && match(l));
+    // "8 cs" = cases still to pick in that section (3 Bud Light 30s + 5 Budweiser 30s).
+    const left = (ls) => ls.reduce((n, l) => n + Math.max(0, l.qty - l.picked - l.out_qty), 0);
+    const sum = (ls, f) => ls.reduce((n, l) => n + f(l), 0);
+    const count = (n, cs) => `${n} item${n === 1 ? '' : 's'} · ${cs} cs`;
     wrap.innerHTML = `
-      ${shownTodo.length ? `<h2 class="section-title">To pick (${shownTodo.length})</h2>${groupLines(shownTodo, ctx).map((g, i, all) => `
-        ${all.length > 1 ? `<h3 class="group-title">${esc(g.label)} <span class="muted">(${g.lines.length})</span></h3>` : ''}
+      ${shownTodo.length ? `<h2 class="section-title">To pick (${count(shownTodo.length, left(shownTodo))})</h2>${groupLines(shownTodo, ctx).map((g, i, all) => `
+        ${all.length > 1 ? `<h3 class="group-title">${esc(g.label)} <span class="group-cases">${count(g.lines.length, left(g.lines))}</span></h3>` : ''}
         <ul class="lines">${g.lines.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>`).join('')}` : ''}
-      ${outs.length ? `<h2 class="section-title">Out (${outs.length})</h2><ul class="lines">${outs.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>` : ''}
-      ${done.length ? `<h2 class="section-title">Picked (${done.length})</h2><ul class="lines">${done.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>` : ''}
+      ${outs.length ? `<h2 class="section-title">Out (${count(outs.length, sum(outs, (l) => l.out_qty))})</h2><ul class="lines">${outs.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>` : ''}
+      ${done.length ? `<h2 class="section-title">Picked (${count(done.length, sum(done, (l) => l.picked))})</h2><ul class="lines">${done.map((l) => lineRow(l, { act, request: requestFor(l) })).join('')}</ul>` : ''}
       ${search && !shownTodo.length && !outs.length && !done.length ? '<p class="muted center">Nothing on this order matches.</p>' : ''}
       ${canPick() ? '<p class="muted small center">Tap an item to change its quantity or mark it out.</p>' : ''}`;
   }

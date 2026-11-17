@@ -84,6 +84,8 @@ Also on the pick screen:
   barcodes the app already knows. Finishing an order needs signal.
 - **↶ Undo** takes back the last change (a scan, a quantity, an out).
 - **Find on this order** filters a long list by name or item #.
+- Each section of the list shows its **total cases** to pick, e.g. *30 packs · 2 items · 8 cs*
+  (3 Bud Light 30s + 5 Budweiser 30s).
 - **Pick time:** a finished order shows how long it took to pick, not counting pauses
   ("Picked in 24 min (paused 10 min)"). It's also on the truck screen, Manage orders and
   Reports › Finished orders (and its CSV).
@@ -121,10 +123,11 @@ Also on the pick screen:
   first…); *Start this list from those rules* turns them into a list to edit.
 - **Stop numbers and carts (VIP imports).** Stops are numbered in loading order: VIP's last
   stop becomes **Stop 1**, so Stop 1 is picked and loaded first and comes off last. Orders of
-  **35 cases or fewer** go on a cart, and small orders share a cart: two 15-case stores both go
-  on Cart 1, up to 35 cases a cart. Carts are numbered per truck (Cart 1 holds the last
+  **31 cases or fewer** go on a cart (32 or more is a pallet), and small orders share carts: they're
+  spread as evenly as possible over the fewest carts of up to 35 cases each, so carts come out
+  close in size. Carts are numbered per truck (Cart 1 holds the last
   deliveries). The truck screen groups the stores on each cart ("Cart 1 · 2 stores · 21 cases"),
-  and the pick list shows VIP's original stop number for reference. Admins change the cart size
+  and the pick list shows VIP's original stop number for reference. Admins change both numbers
   under Settings › Stops and carts (0 turns carts off). **Redo stop #s & carts** on a truck
   (supervisors and up), or *Redo today's trucks now* in Settings, applies it to orders already
   imported. Orders typed in by hand keep their stop numbers.
@@ -152,7 +155,7 @@ Also on the pick screen:
   - **Kegs:** keg lines are only picked for **Truck 1's Wednesday delivery** (imported and
     picked on Tuesday). Every other truck and day has its keg lines left off. Change the
     trucks and delivery days under Settings › Kegs.
-  - **Keg route:** on that truck and day, every order of cart size or smaller (35 cases by
+  - **Keg route:** on that truck and day, every cart-sized order (31 cases or fewer by
     default) is combined into one **KEG ROUTE** order, picked together onto the same pallets.
     The same item is added up across stores, and each line shows the split ("EC PORTER 6 ·
     DOLLAR GENERAL 2") so an out can be traced to the right store; Reports › Outs shows the

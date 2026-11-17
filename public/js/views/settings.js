@@ -45,14 +45,15 @@ export async function settingsView(ctx) {
           `<label class="radio"><input type="checkbox" name="kegDay" value="${d}" ${(ctx.server?.kegRule?.days || [3]).includes(d) ? 'checked' : ''}> ${label}</label>`).join('')}</div>
         <p class="small"><b>Keg route</b></p>
         <label class="radio"><input type="checkbox" id="kegRouteOn" ${ctx.server?.kegRoute?.on !== false ? 'checked' : ''}> Combine the small orders on the keg route into one <b>KEG ROUTE</b> order</label>
-        <p class="muted small">On the trucks and days above, every order of ${esc(ctx.server?.cartMax ?? 35)} cases or fewer (the cart size, under Stops and carts) is added together into one order, picked onto the same pallets. Each line shows how many are for which store. These stores always stay their own order (one per line):</p>
+        <p class="muted small">On the trucks and days above, every order of ${esc(ctx.server?.cartOrderMax ?? 31)} cases or fewer (the cart-order limit, under Stops and carts) is added together into one order, picked onto the same pallets. Each line shows how many are for which store. These stores always stay their own order (one per line):</p>
         <textarea id="kegExcept" rows="3" autocapitalize="characters">${esc((ctx.server?.kegRoute?.except || ['WALMART', "BUDDY'S LIQUOR"]).join('\n'))}</textarea>
         <button class="btn btn-ghost" data-act="saveKegs">Save keg rule</button>
       </section>
       <section class="card">
         <h2>Stops and carts</h2>
-        <p class="muted small">When a VIP order record is imported, stops are numbered in loading order: VIP's last stop becomes <b>Stop 1</b>. Orders this many cases or fewer go on a <b>cart</b>, and small orders share a cart up to this many cases (two 15-case stores go on the same cart). 0 turns carts off.</p>
-        <label class="narrow-field">Cart size (cases)<input id="cartMax" type="number" inputmode="numeric" min="0" max="500" value="${esc(ctx.server?.cartMax ?? 35)}"></label>
+        <p class="muted small">When a VIP order record is imported, stops are numbered in loading order: VIP's last stop becomes <b>Stop 1</b>. Small orders go on <b>carts</b> (32 cases or more is a pallet). Small orders share carts, spread as evenly as possible over the fewest carts, each holding no more than the most cases below. Setting the first number to 0 turns carts off.</p>
+        <label class="narrow-field">Orders this size or smaller go on a cart (cases)<input id="cartOrderMax" type="number" inputmode="numeric" min="0" max="500" value="${esc(ctx.server?.cartOrderMax ?? 31)}"></label>
+        <label class="narrow-field">Most cases on one cart<input id="cartMax" type="number" inputmode="numeric" min="1" max="500" value="${esc(ctx.server?.cartMax ?? 35)}"></label>
         <div class="toolbar">
           <button class="btn btn-primary" data-act="saveCarts">Save cart size</button>
           <button class="btn btn-ghost" data-act="arrangeAll">Redo today's trucks now</button>
@@ -124,9 +125,9 @@ export async function settingsView(ctx) {
   };
   ctx.actions.saveCarts = async () => {
     try {
-      const r = await api.put('/settings/carts', { max: Number(document.getElementById('cartMax').value) });
-      if (ctx.server) ctx.server.cartMax = r.cartMax;
-      toast(`Cart size saved: ${r.cartMax} cases. New imports use it; tap "Redo today's trucks now" for orders already in.`, 'ok');
+      const r = await api.put('/settings/carts', { max: Number(document.getElementById('cartMax').value), orderMax: Number(document.getElementById('cartOrderMax').value) });
+      if (ctx.server) Object.assign(ctx.server, { cartMax: r.cartMax, cartOrderMax: r.cartOrderMax });
+      toast(`Saved: orders of ${r.cartOrderMax} cases or fewer go on carts, up to ${r.cartMax} cases a cart. New imports use it; tap "Redo today's trucks now" for orders already in.`, 'ok');
     } catch (err) { toast(err.message, 'error'); }
   };
   ctx.actions.arrangeAll = async () => {

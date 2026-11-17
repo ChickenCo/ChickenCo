@@ -357,10 +357,26 @@ function combineKegRoute(orders, { rule, max = 35, except = [] } = {}) {
 }
 
 // VIP numbers stops in delivery order, but the truck is loaded last stop first. Per load:
-//  - orders of cartMax cases or fewer go on shared carts (several small stores to a cart, up to cartMax cases each);
+//  - orders of orderMax cases or fewer go on carts (32+ cases is a pallet); small orders share carts,
+//    spread as evenly as possible over the fewest carts that each hold at most cartCap cases;
 //  - the remaining (pallet) orders are renumbered in reverse: VIP's last stop becomes Stop 001.
 // VIP's own stop number is kept as vip_stop.
-function arrangeLoads(orders, { cartMax = 35 } = {}) {
+function packCarts(sizes, cap) {
+  // Fewest carts first, then balance: biggest order onto the lightest cart.
+  const total = sizes.reduce((s, x) => s + x.n, 0);
+  const sorted = [...sizes].sort((a, b) => b.n - a.n || b.stop - a.stop);
+  for (let k = Math.max(1, Math.ceil(total / cap)); k <= sorted.length; k++) {
+    const carts = Array.from({ length: k }, () => ({ cases: 0, items: [] }));
+    for (const x of sorted) {
+      const c = carts.reduce((a, b) => (b.cases < a.cases ? b : a));
+      c.cases += x.n;
+      c.items.push(x);
+    }
+    if (carts.every((c) => c.cases <= cap || c.items.length === 1)) return carts;
+  }
+  return sorted.map((x) => ({ cases: x.n, items: [x] }));
+}
+function arrangeLoads(orders, { cartMax, orderMax = cartMax ?? 31, cartCap = cartMax ?? 35 } = {}) {
   const cases = (o) => o.lines.filter((l) => !l.vipOut).reduce((s, l) => s + l.qty, 0);
   const byLoad = new Map();
   for (const o of orders) {
@@ -371,21 +387,13 @@ function arrangeLoads(orders, { cartMax = 35 } = {}) {
   }
   const stopNo = (o) => parseInt(o.vip_stop, 10) || 0;
   for (const list of byLoad.values()) {
-    const small = cartMax > 0 ? list.filter((o) => cases(o) <= cartMax) : [];
+    const small = orderMax > 0 ? list.filter((o) => cases(o) <= orderMax) : [];
     const pallets = list.filter((o) => !small.includes(o)).sort((a, b) => stopNo(b) - stopNo(a));
     pallets.forEach((o, i) => { o.stop = String(i + 1).padStart(3, '0'); o.is_cart = false; o.cart_no = null; });
-    // First fit, biggest orders first, so as few carts as possible.
-    const carts = [];
-    for (const o of [...small].sort((a, b) => cases(b) - cases(a) || stopNo(b) - stopNo(a))) {
-      const n = cases(o);
-      let cart = carts.find((c) => c.cases + n <= cartMax);
-      if (!cart) { cart = { cases: 0, orders: [] }; carts.push(cart); }
-      cart.cases += n;
-      cart.orders.push(o);
-    }
+    const carts = packCarts(small.map((o) => ({ o, n: cases(o), stop: stopNo(o) })), Math.max(cartCap, 1));
     // Cart 1 holds the stops delivered last, like the pallets.
-    carts.sort((a, b) => Math.max(...b.orders.map(stopNo)) - Math.max(...a.orders.map(stopNo)));
-    carts.forEach((c, i) => c.orders.forEach((o) => { o.stop = ''; o.is_cart = true; o.cart_no = i + 1; }));
+    carts.sort((a, b) => Math.max(...b.items.map((x) => x.stop)) - Math.max(...a.items.map((x) => x.stop)));
+    carts.forEach((c, i) => c.items.forEach(({ o }) => { o.stop = ''; o.is_cart = true; o.cart_no = i + 1; }));
   }
   return orders;
 }

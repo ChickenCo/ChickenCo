@@ -60,7 +60,10 @@ function scanTime(req) {
 const canPick = (user) => atLeast(user, 'picker');
 const canNote = (user) => user.role === 'driver' || atLeast(user, 'supervisor');
 const stopLabel = (o) => (o.combined ? 'Keg route' : o.is_cart ? `Cart${o.cart_no ? ` ${o.cart_no}` : ''}` : `Stop ${o.stop || '—'}`);
+// Carts: orders of cartOrderMax cases or fewer ride on a cart (32+ is a pallet); a cart holds up to cartMax cases.
 const cartMax = () => getSetting('cart_max_cases', 35);
+const cartOrderMax = () => getSetting('cart_order_max', 31);
+const cartOpts = () => ({ orderMax: cartOrderMax(), cartCap: cartMax() });
 // Keg route: combine the small orders on the keg truck/day into one order, except these stores.
 const kegRoute = () => getSetting('keg_route', { on: true, except: ['WALMART', "BUDDY'S LIQUOR"] });
 const parseJson = (s, fallback) => { try { return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
@@ -249,6 +252,7 @@ api.get('/me', h((req) => ({
   kegRule: kegRule(),
   kegRoute: kegRoute(),
   cartMax: cartMax(),
+  cartOrderMax: cartOrderMax(),
   pickPriority: pickPriority(),
   pickPriorityList: pickPriorityList(),
   pauseReasons: pauseReasons(),
@@ -456,8 +460,8 @@ api.post('/orders/import/preview', requireRole('management'),
     // VIP order records: reverse the stop numbers and put small orders on shared carts.
     if (format === 'VIP order record') {
       const kr = kegRoute();
-      if (kr.on) orders = vip.combineKegRoute(orders.map((o) => ({ ...o, truck: o.truck ?? truckForLoad(o.load_no) })), { rule: kegRule(), max: cartMax(), except: kr.except });
-      vip.arrangeLoads(orders, { cartMax: cartMax() });
+      if (kr.on) orders = vip.combineKegRoute(orders.map((o) => ({ ...o, truck: o.truck ?? truckForLoad(o.load_no) })), { rule: kegRule(), max: cartOrderMax(), except: kr.except });
+      vip.arrangeLoads(orders, cartOpts());
       dayGroups = dayGroups?.map((d) => ({ ...d, orders: orders.filter((o) => o.day_no === d.day_no).length }));
     }
     const day = days.displayDay();
@@ -1186,8 +1190,13 @@ api.put('/settings/carts', requireRole('admin'), h((req) => {
   const n = int(req.body.max);
   if (!(n >= 0 && n <= 500)) fail(400, 'Enter a number of cases from 0 to 500');
   setSetting('cart_max_cases', n);
+  if (req.body.orderMax !== undefined) {
+    const m = int(req.body.orderMax);
+    if (!(m >= 0 && m <= 500)) fail(400, 'Enter a number of cases from 0 to 500');
+    setSetting('cart_order_max', m);
+  }
   changed();
-  return { cartMax: cartMax() };
+  return { cartMax: cartMax(), cartOrderMax: cartOrderMax() };
 }));
 
 api.put('/settings/kegs', requireRole('admin'), h((req) => {
@@ -1331,7 +1340,7 @@ api.post('/trucks/:truck/arrange', requireRole('supervisor'), h((req) => {
     .map((o) => ({ ...o, vip_stop: o.vip_stop || o.stop,
       lines: all("SELECT qty, out_reason = 'vip' AS vipOut FROM order_lines WHERE order_id = ?", o.id).map((l) => ({ qty: l.qty, vipOut: !!l.vipOut })) }));
   const before = new Map(orders.map((o) => [o.id, stopLabel(o)]));
-  vip.arrangeLoads(orders, { cartMax: cartMax() });
+  vip.arrangeLoads(orders, cartOpts());
   let moved = 0;
   tx(() => {
     for (const o of orders) {

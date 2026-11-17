@@ -80,8 +80,35 @@ export function feedback(kind) {
   } catch { /* sound is optional */ }
 }
 
-export const modalOpen = () => modal.open;
-export function closeModal() { if (modal.open) modal.close(); }
+// iPhone: while the on-screen keyboard is up (or just closing), Safari lays out fixed things (the dimmed
+// backdrop, the bottom bar) for the smaller screen, and they stay there. So a popup waits for the keyboard
+// to go away first, and the page is nudged to re-lay itself out whenever the keyboard closes.
+const vv = window.visualViewport;
+const keyboardUp = () => !!vv && window.innerHeight - vv.height > 120;
+function keyboardGone() {
+  const el = document.activeElement;
+  const typing = el && el.matches?.('input, textarea, select') && !modal.contains(el);
+  if (typing) el.blur();
+  if (!typing && !keyboardUp()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => (!keyboardUp() || Date.now() - start > 700 ? setTimeout(resolve, 60) : setTimeout(check, 40));
+    setTimeout(check, 80);
+  });
+}
+const relayout = () => requestAnimationFrame(() => window.scrollTo(window.scrollX, window.scrollY));
+if (vv) {
+  let lastH = vv.height;
+  vv.addEventListener('resize', () => { if (vv.height > lastH + 80) relayout(); lastH = vv.height; });
+}
+document.addEventListener('focusout', (e) => { if (e.target.matches?.('input, textarea')) setTimeout(relayout, 300); });
+
+let pendingOpen = null; // a popup waiting for the keyboard to close
+export const modalOpen = () => modal.open || !!pendingOpen;
+export function closeModal() {
+  if (pendingOpen) { const cancel = pendingOpen; pendingOpen = null; cancel(); }
+  if (modal.open) modal.close();
+}
 
 // Generic modal. `onOk(form)` returns the result (may be async) or throws to show an error.
 export function ask({ title, body = '', okText = 'OK', cancelText = 'Cancel', danger = false, onOk = () => true, onOpen, wide = false }) {
@@ -102,6 +129,8 @@ export function ask({ title, body = '', okText = 'OK', cancelText = 'Cancel', da
       modal.oncancel = null;
       modal.onclose = null;
       if (modal.open) modal.close();
+      // Put the keyboard away when a popup with a number box closes.
+      if (modal.contains(document.activeElement)) document.activeElement.blur();
       resolve(val);
     };
     modalForm.onsubmit = async (e) => {
@@ -111,16 +140,25 @@ export function ask({ title, body = '', okText = 'OK', cancelText = 'Cancel', da
       try { finish(await onOk(modalForm, e.submitter)); } catch (err) { errEl.textContent = err.message; errEl.hidden = false; }
       busy = false;
     };
-    modal.oncancel = (e) => { e.preventDefault(); finish(null); };
-    // Closed by navigation. The close event fires async, so a stale one from the previous
-    // modal can arrive after this one opened; ignore it while the dialog is open.
-    modal.onclose = () => { if (!modal.open) finish(null); };
     const cancel = modalForm.querySelector('[data-cancel]');
     if (cancel) cancel.onclick = () => finish(null);
-    modal.showModal();
-    if (onOpen) onOpen(modalForm, finish);
-    const first = modalForm.querySelector('[autofocus]') || modalForm.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea');
-    if (first) { first.focus(); if (first.select) first.select(); }
+    const show = () => {
+      modal.oncancel = (e) => { e.preventDefault(); finish(null); };
+      // Closed by navigation. The close event fires async, so a stale one from the previous
+      // modal can arrive after this one opened; ignore it while the dialog is open.
+      modal.onclose = () => { if (!modal.open) finish(null); };
+      modal.showModal();
+      if (onOpen) onOpen(modalForm, finish);
+      const first = modalForm.querySelector('[autofocus]') || modalForm.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea');
+      if (first) { first.focus(); if (first.select) first.select(); }
+    };
+    const token = () => finish(null);
+    pendingOpen = token;
+    keyboardGone().then(() => {
+      if (pendingOpen !== token) return; // cancelled (screen changed) while waiting
+      pendingOpen = null;
+      show();
+    });
   });
 }
 

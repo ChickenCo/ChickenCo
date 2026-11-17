@@ -397,3 +397,4 @@ td.num { text-align: right; }
 .keg-tag { background: var(--brand); color: #fff; }
 .keg-stores { margin: 8px 0 0; }
 .line-sources { color: var(--muted); font-size: .8rem; }
+.group-title .group-cases { float: right; color: var(--text); font-weight: 800; letter-spacing: 0; text-transform: none; }
